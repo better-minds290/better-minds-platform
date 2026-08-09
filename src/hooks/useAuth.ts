@@ -328,6 +328,76 @@ export function useAuth() {
     return { success: true };
   }, []);
 
+  const changePassword = useCallback(
+    async (email: string, currentPassword: string, newPassword: string) => {
+      setError(null);
+      const supabase = getSupabase();
+      let verified = false;
+
+      try {
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password: currentPassword,
+        });
+
+        if (signInError) {
+          const msg = signInError.message.toLowerCase();
+          if (
+            msg.includes("invalid login credentials") ||
+            msg.includes("invalid email or password")
+          ) {
+            return { success: false, error: "wrong_current_password" };
+          }
+          return { success: false, error: signInError.message };
+        }
+
+        if (!data.user || !data.session) {
+          return { success: false, error: "wrong_current_password" };
+        }
+
+        verified = true;
+
+        const { error: updateError } = await supabase.auth.updateUser({
+          password: newPassword,
+        });
+
+        if (updateError) {
+          setError(updateError.message);
+          return { success: false, error: updateError.message };
+        }
+
+        return { success: true };
+      } finally {
+        if (verified) {
+          try {
+            await Promise.race([
+              supabase.auth.signOut({ scope: "local" }),
+              new Promise((resolve) => setTimeout(resolve, 2000)),
+            ]);
+          } catch (err) {
+            console.warn("Sign out after password change failed (ignored):", err);
+          }
+
+          try {
+            if (typeof window !== "undefined") {
+              Object.keys(window.localStorage).forEach((key) => {
+                if (key.startsWith("sb-") || key.includes("supabase")) {
+                  window.localStorage.removeItem(key);
+                }
+              });
+            }
+          } catch {
+            // ignore storage errors
+          }
+
+          setUser(null);
+          setProfile(null);
+        }
+      }
+    },
+    []
+  );
+
   return {
     user,
     profile,
@@ -338,6 +408,7 @@ export function useAuth() {
     signOut,
     resetPassword,
     updatePassword,
+    changePassword,
     isAuthenticated: !!user,
   };
 }

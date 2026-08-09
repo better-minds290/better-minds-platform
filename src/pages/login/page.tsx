@@ -24,7 +24,7 @@ export default function Login() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const { signIn, resetPassword, isAuthenticated, profile } = useAuth();
+  const { signIn, changePassword, isAuthenticated, profile } = useAuth();
 
   const [selectedRole, setSelectedRole] = useState<SelectedRole>(null);
   const [email, setEmail] = useState("");
@@ -33,11 +33,18 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const [showForgotForm, setShowForgotForm] = useState(false);
-  const [forgotEmail, setForgotEmail] = useState("");
-  const [forgotError, setForgotError] = useState("");
-  const [forgotLoading, setForgotLoading] = useState(false);
-  const [forgotSent, setForgotSent] = useState(false);
+  const [showChangePasswordForm, setShowChangePasswordForm] = useState(false);
+  const [changeEmail, setChangeEmail] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [changeError, setChangeError] = useState("");
+  const [changeLoading, setChangeLoading] = useState(false);
+  const [changeSuccess, setChangeSuccess] = useState(false);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
   const [signInSuccess, setSignInSuccess] = useState(false);
 
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname || "/dashboard";
@@ -46,6 +53,7 @@ export default function Login() {
 
   // Redirect if already authenticated and profile loaded
   useEffect(() => {
+    if (isChangingPassword) return;
     if (isAuthenticated && profile) {
       if (profile.role === "foreign_teacher" && i18n.language !== "en") {
         i18n.changeLanguage("en").then(() => {
@@ -57,7 +65,7 @@ export default function Login() {
         navigate(redirectPath, { replace: true });
       }
     }
-  }, [isAuthenticated, profile, navigate]);
+  }, [isAuthenticated, profile, navigate, isChangingPassword]);
 
   const validate = (): boolean => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -96,66 +104,85 @@ export default function Login() {
     }
   };
 
-  const handleForgotSubmit = async (e: FormEvent) => {
+  const handleChangePasswordSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setForgotError("");
+    setChangeError("");
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(forgotEmail)) {
-      setForgotError(t("auth.invalidEmail"));
+    if (!changeEmail.trim() || !currentPassword || !newPassword || !confirmNewPassword) {
+      setChangeError(t("auth.fieldRequired"));
+      return;
+    }
+    if (!emailRegex.test(changeEmail)) {
+      setChangeError(t("auth.invalidEmail"));
+      return;
+    }
+    if (newPassword.length < 8) {
+      setChangeError(t("auth.passwordTooShort"));
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setChangeError(t("auth.passwordsDontMatch"));
       return;
     }
 
-    setForgotLoading(true);
-    const forgotResult = await resetPassword(forgotEmail);
-    setForgotLoading(false);
+    setChangeLoading(true);
+    setIsChangingPassword(true);
+    const result = await changePassword(changeEmail.trim(), currentPassword, newPassword);
+    setIsChangingPassword(false);
+    setChangeLoading(false);
 
-    if (forgotResult.success) {
-      setForgotSent(true);
+    if (result.success) {
+      setChangeSuccess(true);
+    } else if (result.error === "wrong_current_password") {
+      setChangeError(t("auth.wrongCurrentPassword"));
     } else {
-      setForgotError(forgotResult.error || t("auth.registerError"));
+      setChangeError(result.error || t("auth.registerError"));
     }
   };
 
-  const closeForgotForm = () => {
-    setShowForgotForm(false);
-    setForgotEmail("");
-    setForgotError("");
-    setForgotSent(false);
+  const closeChangePasswordForm = () => {
+    setShowChangePasswordForm(false);
+    setChangeEmail("");
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setChangeError("");
+    setChangeSuccess(false);
+    setIsChangingPassword(false);
   };
 
   // Rendered role label
   const roleLabel = selectedRole === "learner" ? t("auth.loginAsLearner") : t("auth.loginAsTeacher");
 
   // ========================
-  // FORGOT PASSWORD VIEW
+  // CHANGE PASSWORD VIEW
   // ========================
-  if (showForgotForm) {
+  if (showChangePasswordForm) {
     return (
       <div className="min-h-screen bg-background-50 flex items-center justify-center px-4">
         <div className="w-full max-w-md">
           <button
-            onClick={closeForgotForm}
+            onClick={closeChangePasswordForm}
             className="inline-flex items-center text-sm text-foreground-500 hover:text-primary-600 mb-10 transition-colors duration-200 cursor-pointer group"
           >
             <i className="ri-arrow-left-line mr-1.5 group-hover:-translate-x-0.5 transition-transform"></i>
             {t("auth.backToLogin")}
           </button>
 
-          {forgotSent ? (
+          {changeSuccess ? (
             <div className="text-center">
               <div className="w-20 h-20 mx-auto mb-6 flex items-center justify-center rounded-full bg-accent-100">
-                <i className="ri-mail-send-line text-3xl text-accent-600"></i>
+                <i className="ri-shield-check-line text-3xl text-accent-600"></i>
               </div>
               <h1 className="font-heading text-2xl font-bold text-foreground-950 mb-3">
-                {t("auth.forgotPasswordCheckEmail")}
+                {t("auth.changePasswordSuccess")}
               </h1>
-              <p className="text-sm text-foreground-500 mb-4" dangerouslySetInnerHTML={{ __html: t("auth.forgotPasswordCheckEmailDesc", { email: forgotEmail }) }}></p>
-              <div className="text-sm text-foreground-500 mb-8 text-left space-y-2">
-                <p className="flex items-start gap-2" dangerouslySetInnerHTML={{ __html: t("auth.forgotPasswordSpamHint") }}></p>
-              </div>
+              <p className="text-sm text-foreground-500 mb-8">
+                {t("auth.changePasswordSuccessDesc")}
+              </p>
               <button
-                onClick={closeForgotForm}
+                onClick={closeChangePasswordForm}
                 className="inline-flex items-center px-6 py-3 rounded-lg text-sm font-semibold bg-primary-500 text-background-50 hover:bg-primary-600 transition-colors duration-200 whitespace-nowrap cursor-pointer"
               >
                 {t("auth.backToLogin")}
@@ -165,24 +192,24 @@ export default function Login() {
             <>
               <div className="mb-8">
                 <h1 className="font-heading text-3xl font-bold text-foreground-950 mb-2">
-                  {t("auth.forgotPasswordTitle")}
+                  {t("auth.changePasswordTitle")}
                 </h1>
                 <p className="text-sm text-foreground-500">
-                  {t("auth.forgotPasswordSubtitle")}
+                  {t("auth.changePasswordSubtitle")}
                 </p>
               </div>
 
-              {forgotError && (
+              {changeError && (
                 <div className="mb-6 p-3.5 rounded-lg bg-accent-100/80 border border-accent-300/60 text-sm text-accent-800 flex items-start gap-2.5">
                   <i className="ri-error-warning-line text-base flex-shrink-0 mt-0.5"></i>
-                  <span>{forgotError}</span>
+                  <span>{changeError}</span>
                 </div>
               )}
 
-              <form onSubmit={handleForgotSubmit} className="space-y-5">
+              <form onSubmit={handleChangePasswordSubmit} className="space-y-5">
                 <div>
                   <label
-                    htmlFor="forgot-email"
+                    htmlFor="change-email"
                     className="block text-sm font-medium text-foreground-700 mb-1.5"
                   >
                     {t("auth.emailLabel")}
@@ -190,10 +217,10 @@ export default function Login() {
                   <div className="relative">
                     <i className="ri-mail-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400 text-base"></i>
                     <input
-                      id="forgot-email"
+                      id="change-email"
                       type="email"
-                      value={forgotEmail}
-                      onChange={(e) => setForgotEmail(e.target.value)}
+                      value={changeEmail}
+                      onChange={(e) => setChangeEmail(e.target.value)}
                       placeholder={t("auth.emailPlaceholder")}
                       autoComplete="email"
                       autoFocus
@@ -202,18 +229,105 @@ export default function Login() {
                   </div>
                 </div>
 
+                <div>
+                  <label
+                    htmlFor="change-current-password"
+                    className="block text-sm font-medium text-foreground-700 mb-1.5"
+                  >
+                    {t("auth.currentPasswordLabel")}
+                  </label>
+                  <div className="relative">
+                    <i className="ri-lock-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400 text-base"></i>
+                    <input
+                      id="change-current-password"
+                      type={showCurrentPassword ? "text" : "password"}
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder={t("auth.currentPasswordPlaceholder")}
+                      autoComplete="current-password"
+                      className="w-full pl-10 pr-12 py-3 text-sm bg-background-50 border border-background-300 rounded-lg text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20 transition-all duration-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-foreground-400 hover:text-foreground-600 transition-colors cursor-pointer"
+                      tabIndex={-1}
+                    >
+                      <i className={`text-base ${showCurrentPassword ? "ri-eye-off-line" : "ri-eye-line"}`}></i>
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="change-new-password"
+                    className="block text-sm font-medium text-foreground-700 mb-1.5"
+                  >
+                    {t("auth.newPasswordLabel")}
+                  </label>
+                  <div className="relative">
+                    <i className="ri-lock-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400 text-base"></i>
+                    <input
+                      id="change-new-password"
+                      type={showNewPassword ? "text" : "password"}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder={t("auth.newPasswordPlaceholder")}
+                      autoComplete="new-password"
+                      className="w-full pl-10 pr-12 py-3 text-sm bg-background-50 border border-background-300 rounded-lg text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20 transition-all duration-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword(!showNewPassword)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-foreground-400 hover:text-foreground-600 transition-colors cursor-pointer"
+                      tabIndex={-1}
+                    >
+                      <i className={`text-base ${showNewPassword ? "ri-eye-off-line" : "ri-eye-line"}`}></i>
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="change-confirm-password"
+                    className="block text-sm font-medium text-foreground-700 mb-1.5"
+                  >
+                    {t("auth.confirmPasswordLabel")}
+                  </label>
+                  <div className="relative">
+                    <i className="ri-lock-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400 text-base"></i>
+                    <input
+                      id="change-confirm-password"
+                      type={showConfirmNewPassword ? "text" : "password"}
+                      value={confirmNewPassword}
+                      onChange={(e) => setConfirmNewPassword(e.target.value)}
+                      placeholder={t("auth.confirmPasswordPlaceholder")}
+                      autoComplete="new-password"
+                      className="w-full pl-10 pr-12 py-3 text-sm bg-background-50 border border-background-300 rounded-lg text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20 transition-all duration-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmNewPassword(!showConfirmNewPassword)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-foreground-400 hover:text-foreground-600 transition-colors cursor-pointer"
+                      tabIndex={-1}
+                    >
+                      <i className={`text-base ${showConfirmNewPassword ? "ri-eye-off-line" : "ri-eye-line"}`}></i>
+                    </button>
+                  </div>
+                </div>
+
                 <button
                   type="submit"
-                  disabled={forgotLoading}
+                  disabled={changeLoading}
                   className="w-full inline-flex items-center justify-center px-6 py-3 rounded-lg text-sm font-semibold bg-primary-500 text-background-50 hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-colors duration-200 whitespace-nowrap cursor-pointer"
                 >
-                  {forgotLoading ? (
+                  {changeLoading ? (
                     <>
                       <div className="w-4 h-4 border-2 border-background-50/30 border-t-background-50 rounded-full animate-spin mr-2"></div>
-                      {t("auth.forgotPasswordSending")}
+                      {t("auth.changePasswordUpdating")}
                     </>
                   ) : (
-                    t("auth.forgotPasswordSend")
+                    t("auth.changePasswordButton")
                   )}
                 </button>
               </form>
@@ -493,10 +607,10 @@ export default function Login() {
               </label>
               <button
                 type="button"
-                onClick={() => setShowForgotForm(true)}
+                onClick={() => setShowChangePasswordForm(true)}
                 className="text-sm text-primary-600 hover:text-primary-700 transition-colors cursor-pointer"
               >
-                {t("auth.forgotPassword")}
+                {t("auth.changePassword")}
               </button>
             </div>
 
