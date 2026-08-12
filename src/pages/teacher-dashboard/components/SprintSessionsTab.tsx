@@ -31,6 +31,7 @@ interface SprintSession {
   session_materials: Array<{ file_name: string; file_path: string; file_size?: number }>;
   session_description: string | null;
   class_id: string | null;
+  self_study_questions: string | null;
 }
 
 function groupSessionsByClass(sessions: SprintSession[]): SprintSession[][] {
@@ -89,8 +90,31 @@ export default function SprintSessionsTab() {
         return;
       }
 
-      // Step 2: Fetch all related sprints
-      const sprintIds = [...new Set(sessionsData.map((s: any) => s.sprint_id))];
+      // Step 2: Fetch Session 1 lesson summaries (source of truth for self-study submissions)
+      const sprintIds = [...new Set(sessionsData.map((s: { sprint_id: string }) => s.sprint_id))];
+      const summaryBySprintId: Record<
+        string,
+        { lesson_summary: string | null; teacher_feedback: string | null }
+      > = {};
+
+      if (sprintIds.length > 0) {
+        const { data: session1Rows } = await supabase
+          .from("sprint_sessions")
+          .select("sprint_id, lesson_summary, teacher_feedback")
+          .in("sprint_id", sprintIds)
+          .eq("session_number", 1);
+
+        (session1Rows || []).forEach(
+          (row: { sprint_id: string; lesson_summary: string | null; teacher_feedback: string | null }) => {
+            summaryBySprintId[row.sprint_id] = {
+              lesson_summary: row.lesson_summary,
+              teacher_feedback: row.teacher_feedback,
+            };
+          }
+        );
+      }
+
+      // Step 3: Fetch all related sprints
       const { data: sprintsData } = await supabase
         .from("learning_sprints")
         .select("id, sprint_number, status, enrollment_id")
@@ -99,7 +123,7 @@ export default function SprintSessionsTab() {
       const sprintMap: Record<string, any> = {};
       (sprintsData || []).forEach((sp: any) => { sprintMap[sp.id] = sp; });
 
-      // Step 3: Fetch all related enrollments
+      // Step 4: Fetch all related enrollments
       const enrollmentIds = [...new Set((sprintsData || []).map((sp: any) => sp.enrollment_id).filter(Boolean))];
       const { data: enrollmentsData } = await supabase
         .from("enrollments")
@@ -109,7 +133,7 @@ export default function SprintSessionsTab() {
       const enrollmentMap: Record<string, any> = {};
       (enrollmentsData || []).forEach((en: any) => { enrollmentMap[en.id] = en; });
 
-      // Step 4: Fetch courses and learner profiles
+      // Step 5: Fetch courses and learner profiles
       const courseIds = [...new Set((enrollmentsData || []).map((en: any) => en.course_id).filter(Boolean))];
       const learnerIds = [...new Set((enrollmentsData || []).map((en: any) => en.learner_id).filter(Boolean))];
 
@@ -128,7 +152,7 @@ export default function SprintSessionsTab() {
       const profileMap: Record<string, any> = {};
       (profilesResult.data || []).forEach((p: any) => { profileMap[p.id] = p; });
 
-      // Step 5: Build per-learner session stats
+      // Step 6: Build per-learner session stats
       const learnerSessionStats: Record<string, { completed: number; total: number }> = {};
       sessionsData.forEach((s: any) => {
         const sprint = sprintMap[s.sprint_id];
@@ -140,7 +164,7 @@ export default function SprintSessionsTab() {
         if (s.status === "completed") learnerSessionStats[lid].completed++;
       });
 
-      // Step 5.5: Fetch course_sprint_templates for session materials
+      // Step 6.5: Fetch course_sprint_templates for session materials
       const sprintTemplateKeys: Array<{ courseId: string; sprintNum: number }> = [];
       const seenTemplateKeys = new Set<string>();
       (sprintsData || []).forEach((sp: any) => {
@@ -179,7 +203,7 @@ export default function SprintSessionsTab() {
         });
       }
 
-      // Step 6: Map to final SprintSession array
+      // Step 7: Map to final SprintSession array
       const mapped: SprintSession[] = sessionsData.map((s: any) => {
         const sprint = sprintMap[s.sprint_id];
         const enrollment = sprint ? enrollmentMap[sprint.enrollment_id] : null;
@@ -188,6 +212,14 @@ export default function SprintSessionsTab() {
         const lid: string = enrollment?.learner_id || "";
         const stats = learnerSessionStats[lid] || { completed: 0, total: 0 };
         const mKey = `${enrollment?.course_id || ""}-${sprint?.sprint_number || 0}`;
+        const session1Data = summaryBySprintId[s.sprint_id];
+        const session1Feedback = session1Data?.teacher_feedback ?? null;
+        const selfStudyQuestions = session1Feedback?.startsWith("Câu hỏi: ")
+          ? session1Feedback.replace("Câu hỏi: ", "")
+          : null;
+        const session1Summary = session1Data?.lesson_summary?.trim()
+          ? session1Data.lesson_summary
+          : null;
 
         return {
           id: s.id,
@@ -198,7 +230,8 @@ export default function SprintSessionsTab() {
           scheduled_at: s.scheduled_at,
           status: s.status,
           meeting_link: s.meeting_link,
-          lesson_summary: s.lesson_summary,
+          lesson_summary: session1Summary,
+          self_study_questions: selfStudyQuestions,
           feedback: s.feedback,
           grade: s.grade,
           sprint_number: sprint?.sprint_number ?? 0,
@@ -320,14 +353,22 @@ export default function SprintSessionsTab() {
     });
   };
 
-  function parseLessonSummary(summary: string | null): { what_learned: string; questions: string } | null {
-    if (!summary) return null;
+  function parseLessonSummary(
+    summary: string | null,
+    questionsFromSession1?: string | null
+  ): { what_learned: string; questions: string } | null {
+    if (!summary || !summary.trim()) return null;
+    let parsed: { what_learned: string; questions: string };
     try {
-      return JSON.parse(summary);
+      parsed = JSON.parse(summary);
     } catch {
-      return { what_learned: summary, questions: "" };
+      parsed = { what_learned: summary, questions: "" };
     }
-  };
+    if (!parsed.questions && questionsFromSession1) {
+      parsed.questions = questionsFromSession1;
+    }
+    return parsed;
+  }
 
   if (loading) {
     return (
@@ -438,10 +479,9 @@ export default function SprintSessionsTab() {
             const session = group[0];
             const groupStatus = getGroupStatus(group);
             const sessionUrl = `/dashboard/sprint/${session.sprint_id}/session/${session.id}`;
-            const hasSummary = group.some((s) => !!s.lesson_summary);
+            const hasSummary = group.some((s) => !!s.lesson_summary?.trim());
             const hasFeedback = group.some((s) => !!s.feedback);
             const isExpanded = expandedId === session.id + "-group";
-            const parsedSummary = parseLessonSummary(session.lesson_summary);
             const studentCount = group.length;
             const studentNames = group.map((s) => s.student_name).join(", ");
             const avgProgress = group.length > 0
@@ -611,29 +651,55 @@ export default function SprintSessionsTab() {
                     </div>
                   )}
 
-                  {/* Lesson Summary */}
-                  {parsedSummary && (
-                    <div className="p-4 rounded-lg bg-background-50/50 border border-background-200/70">
-                      <p className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                        <i className="ri-file-text-line"></i>
-                        {t("teacher.expandedLessonSummary")}
-                      </p>
-                      <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-wrap">
-                        {parsedSummary.what_learned}
-                      </p>
-                      {parsedSummary.questions && (
-                        <div className="mt-3 pt-3 border-t border-background-100">
-                          <p className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                            <i className="ri-question-line"></i>
-                            {t("teacher.expandedQuestions")}
-                          </p>
-                          <p className="text-sm text-foreground-600 italic whitespace-pre-wrap">
-                            &ldquo;{parsedSummary.questions}&rdquo;
-                          </p>
+                  {/* Lesson Summary — per learner */}
+                  <div className="space-y-3">
+                    <p className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <i className="ri-file-text-line"></i>
+                      {t("teacher.expandedLessonSummary")}
+                    </p>
+                    {group.map((s) => {
+                      const parsed = parseLessonSummary(s.lesson_summary, s.self_study_questions);
+                      return (
+                        <div
+                          key={s.learner_id}
+                          className="p-4 rounded-lg bg-background-50/50 border border-background-200/70"
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            {s.student_avatar_url ? (
+                              <img src={s.student_avatar_url} alt="" className="w-6 h-6 rounded-full object-cover" />
+                            ) : (
+                              <div className="w-6 h-6 rounded-full bg-secondary-100 flex items-center justify-center text-[10px] text-secondary-600 font-bold">
+                                {s.student_name.charAt(0)}
+                              </div>
+                            )}
+                            <p className="text-sm font-semibold text-foreground-900">{s.student_name}</p>
+                          </div>
+                          {parsed ? (
+                            <>
+                              <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-wrap">
+                                {parsed.what_learned}
+                              </p>
+                              {parsed.questions && (
+                                <div className="mt-3 pt-3 border-t border-background-100">
+                                  <p className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                                    <i className="ri-question-line"></i>
+                                    {t("teacher.expandedQuestions")}
+                                  </p>
+                                  <p className="text-sm text-foreground-600 italic whitespace-pre-wrap">
+                                    &ldquo;{parsed.questions}&rdquo;
+                                  </p>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <p className="text-sm text-foreground-500 italic">
+                              {t("liveLesson.noSummaryForTeacher")}
+                            </p>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  )}
+                      );
+                    })}
+                  </div>
 
                   {/* Feedback */}
                   {session.feedback && (
@@ -703,18 +769,6 @@ export default function SprintSessionsTab() {
                       </p>
                       <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-wrap">
                         {session.session_description}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* No data message */}
-                  {!parsedSummary && !session.feedback && !(session.grade && session.grade > 0) && !session.session_description && (
-                    <div className="text-center py-4">
-                      <div className="w-10 h-10 mx-auto flex items-center justify-center rounded-full bg-background-100 mb-2">
-                        <i className="ri-inbox-line text-foreground-400"></i>
-                      </div>
-                      <p className="text-xs text-foreground-400">
-                        {t("teacher.expandedNoData")}
                       </p>
                     </div>
                   )}
