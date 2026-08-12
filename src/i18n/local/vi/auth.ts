@@ -403,6 +403,18 @@ const auth = {
   "auth.adminTeacherActivateTitle": "Kích hoạt giáo viên",
   "auth.adminTeacherToggleFailed": "Không thể cập nhật trạng thái giáo viên",
 
+  "auth.adminDeleteTeacher": "Xóa",
+  "auth.adminDeleteTeacherTitle": "Xóa tài khoản giáo viên",
+  "auth.adminDeleteTeacherWarning": "Thao tác này xóa vĩnh viễn tài khoản giáo viên và không thể hoàn tác.",
+  "auth.adminDeleteTeacherDesc1": "Xóa quyền đăng nhập và hồ sơ khỏi Better Minds.",
+  "auth.adminDeleteTeacherDesc2": "Xóa availability và giải phóng các buổi học sắp tới đang gán giáo viên này.",
+  "auth.adminDeleteTeacherDesc3": "Giữ lịch sử buổi học đã hoàn thành của học viên (tên giáo viên có thể hiện chưa gán).",
+  "auth.adminDeleteTeacherDesc4": "Muốn dạy lại sau này phải tạo tài khoản mới hoàn toàn.",
+  "auth.adminDeleteTeacherConfirm": "Xóa tài khoản",
+  "auth.adminDeleteTeacherDeleting": "Đang xóa...",
+  "auth.adminDeleteTeacherSuccess": " đã được xóa vĩnh viễn.",
+  "auth.adminDeleteTeacherFailed": "Không thể xóa tài khoản giáo viên. Vui lòng thử lại.",
+
   // ── Admin Assign Learner ──
   "auth.adminAssignTitle": "Xếp Lịch Cho Học Viên",
   "auth.adminAssignSubtitle": "Admin có thể xếp học viên vào bất kỳ lớp còn trống nào, mọi ngày trong tuần.",
@@ -511,6 +523,7 @@ const auth = {
   "auth.adminCalendarLegendUnavailable": "Không Rảnh",
   "auth.adminCalendarLegendAvailable": "Còn Trống",
   "auth.adminCalendarAvailableTeachers": "{{count}} giáo viên rảnh",
+  "auth.adminCalendarLearnersBooked": "học viên đã xếp",
   "auth.adminCalendarUnavailableLabel": "Không Rảnh",
   "auth.adminCalendarLegendCompleted": "Hoàn Thành",
   "auth.adminCalendarLegendMissed": "Trễ",

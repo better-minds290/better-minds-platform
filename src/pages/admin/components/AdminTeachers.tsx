@@ -32,6 +32,8 @@ export default function AdminTeachers() {
   const [pwModal, setPwModal] = useState<{ open: boolean; userId: string; userName: string } | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [pwResetting, setPwResetting] = useState(false);
+  const [deleteModal, setDeleteModal] = useState<{ open: boolean; userId: string; userName: string; email: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [toast, setToast] = useState<ToastState>({ visible: false, type: "success", message: "" });
 
   const showToast = (type: "success" | "error", message: string) => {
@@ -166,6 +168,35 @@ export default function AdminTeachers() {
     }
   };
 
+  const handleDeleteAccount = async () => {
+    if (!deleteModal) return;
+    setDeleting(true);
+    try {
+      const supabase = getSupabase();
+      const { data, error: fnError } = await supabase.functions.invoke("admin-delete-teacher", {
+        body: { user_id: deleteModal.userId },
+      });
+
+      if (fnError) {
+        showToast("error", fnError.message || t("auth.adminDeleteTeacherFailed"));
+        return;
+      }
+      if (data?.error) {
+        showToast("error", data.error);
+        return;
+      }
+
+      showToast("success", deleteModal.userName + t("auth.adminDeleteTeacherSuccess"));
+      setDeleteModal(null);
+      await fetchTeachers();
+    } catch (err) {
+      console.error("Delete teacher error:", err);
+      showToast("error", err instanceof Error ? err.message : t("auth.adminDeleteTeacherFailed"));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div>
       {/* Toast */}
@@ -180,6 +211,70 @@ export default function AdminTeachers() {
           <div className="flex items-center gap-2">
             <i className={toast.type === "success" ? "ri-check-line" : "ri-error-warning-line"}></i>
             {toast.message}
+          </div>
+        </div>
+      )}
+
+      {/* Delete Teacher Modal */}
+      {deleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-background-50 rounded-2xl w-full max-w-md mx-4 shadow-xl border border-background-200 overflow-hidden">
+            <div className="p-6">
+              <div className="w-12 h-12 flex items-center justify-center rounded-full bg-accent-100 text-accent-700 mx-auto mb-4">
+                <i className="ri-user-unfollow-line text-xl"></i>
+              </div>
+              <h3 className="text-lg font-bold text-foreground-950 text-center">
+                {t("auth.adminDeleteTeacherTitle")}
+              </h3>
+              <p className="text-xs text-foreground-500 text-center mt-1">{deleteModal.userName}</p>
+              <p className="text-xs text-foreground-400 text-center">{deleteModal.email}</p>
+              <div className="mt-5 p-4 rounded-xl bg-accent-50 border border-accent-200">
+                <p className="text-sm font-medium text-accent-800 mb-2">
+                  {t("auth.adminDeleteTeacherWarning")}
+                </p>
+                <ul className="space-y-1.5 text-xs text-accent-700">
+                  <li className="flex items-start gap-1.5">
+                    <i className="ri-checkbox-blank-circle-fill text-[6px] mt-1.5 flex-shrink-0"></i>
+                    {t("auth.adminDeleteTeacherDesc1")}
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <i className="ri-checkbox-blank-circle-fill text-[6px] mt-1.5 flex-shrink-0"></i>
+                    {t("auth.adminDeleteTeacherDesc2")}
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <i className="ri-checkbox-blank-circle-fill text-[6px] mt-1.5 flex-shrink-0"></i>
+                    {t("auth.adminDeleteTeacherDesc3")}
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <i className="ri-checkbox-blank-circle-fill text-[6px] mt-1.5 flex-shrink-0"></i>
+                    {t("auth.adminDeleteTeacherDesc4")}
+                  </li>
+                </ul>
+              </div>
+              <div className="flex items-center gap-3 mt-6">
+                <button
+                  onClick={() => setDeleteModal(null)}
+                  disabled={deleting}
+                  className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium bg-background-100 text-foreground-700 hover:bg-background-200 transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50"
+                >
+                  {t("auth.adminCancel")}
+                </button>
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={deleting}
+                  className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium bg-accent-600 text-background-50 hover:bg-accent-700 transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {deleting ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-background-50/30 border-t-background-50 rounded-full animate-spin"></div>
+                      {t("auth.adminDeleteTeacherDeleting")}
+                    </>
+                  ) : (
+                    t("auth.adminDeleteTeacherConfirm")
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -381,6 +476,20 @@ export default function AdminTeachers() {
                       >
                         <i className={teacher.is_active ? "ri-toggle-fill text-base" : "ri-toggle-line text-base"}></i>
                         {teacher.is_active ? t("auth.adminActivate") : t("auth.adminDeactivate")}
+                      </button>
+                      <button
+                        onClick={() =>
+                          setDeleteModal({
+                            open: true,
+                            userId: teacher.id,
+                            userName: teacher.full_name,
+                            email: teacher.email,
+                          })
+                        }
+                        className="inline-flex items-center justify-center w-8 h-8 rounded-md text-xs font-medium bg-accent-50 text-accent-700 hover:bg-accent-100 border border-accent-200 transition-colors cursor-pointer"
+                        title={t("auth.adminDeleteTeacherTitle")}
+                      >
+                        <i className="ri-delete-bin-line"></i>
                       </button>
                     </div>
                   </td>

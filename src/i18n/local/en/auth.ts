@@ -404,6 +404,18 @@ const auth = {
   "auth.adminTeacherActivateTitle": "Activate teacher",
   "auth.adminTeacherToggleFailed": "Failed to update teacher status",
 
+  "auth.adminDeleteTeacher": "Delete",
+  "auth.adminDeleteTeacherTitle": "Delete teacher account",
+  "auth.adminDeleteTeacherWarning": "This permanently deletes the teacher account and cannot be undone.",
+  "auth.adminDeleteTeacherDesc1": "Removes login access and the profile from Better Minds.",
+  "auth.adminDeleteTeacherDesc2": "Removes availability and releases upcoming session assignments.",
+  "auth.adminDeleteTeacherDesc3": "Preserves completed learner session history (teacher name may show as unassigned).",
+  "auth.adminDeleteTeacherDesc4": "To teach again later, create a brand-new account.",
+  "auth.adminDeleteTeacherConfirm": "Delete account",
+  "auth.adminDeleteTeacherDeleting": "Deleting...",
+  "auth.adminDeleteTeacherSuccess": " has been permanently deleted.",
+  "auth.adminDeleteTeacherFailed": "Failed to delete teacher account. Please try again.",
+
   // ── Admin Assign Learner ──
   "auth.adminAssignTitle": "Assign Learner to Class",
   "auth.adminAssignSubtitle": "Admins can assign learners to any available class slot, any day of the week.",
@@ -513,6 +525,7 @@ const auth = {
   "auth.adminCalendarLegendUnavailable": "Unavailable",
   "auth.adminCalendarLegendAvailable": "Available",
   "auth.adminCalendarAvailableTeachers": "{{count}} teacher(s) free",
+  "auth.adminCalendarLearnersBooked": "learners booked",
   "auth.adminCalendarUnavailableLabel": "Unavailable",
   "auth.adminCalendarLegendCompleted": "Completed",
   "auth.adminCalendarLegendMissed": "Missed",

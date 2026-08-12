@@ -24,7 +24,8 @@ interface CalendarSlot {
 }
 
 interface CellData {
-  booked: CalendarSlot | null;
+  booked: CalendarSlot[];
+  availableSlots: CalendarSlot[];
   availableCount: number;
   availableTeachers: string[];
   unavailableCount: number;
@@ -91,6 +92,7 @@ export default function AdminCalendar() {
   const { t } = useTranslation();
   const supabase = getSupabase();
   const [weekStart, setWeekStart] = useState(() => getMondayOfWeek(new Date()));
+  const [openTooltipKey, setOpenTooltipKey] = useState<string | null>(null);
   const [slots, setSlots] = useState<CalendarSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -325,6 +327,8 @@ export default function AdminCalendar() {
             start_time: st,
             end_time: et,
             duration_minutes: dur,
+            max_students: 2,
+            booked_count: 0,
           });
         }
       });
@@ -399,15 +403,22 @@ export default function AdminCalendar() {
     slots.forEach((s) => {
       const cellKey = `${s.date}|${s.start_time}`;
       if (!map.has(cellKey)) {
-        map.set(cellKey, { booked: null, availableCount: 0, availableTeachers: [], unavailableCount: 0 });
+        map.set(cellKey, {
+          booked: [],
+          availableSlots: [],
+          availableCount: 0,
+          availableTeachers: [],
+          unavailableCount: 0,
+        });
       }
       const cell = map.get(cellKey)!;
 
       if (s.slot_type === "booked") {
-        cell.booked = s;
+        cell.booked.push(s);
       } else if (s.slot_type === "available") {
         cell.availableCount++;
         cell.availableTeachers.push(s.teacher_name);
+        cell.availableSlots.push(s);
       }
     });
 
@@ -476,15 +487,22 @@ export default function AdminCalendar() {
     filteredSlots.forEach((s) => {
       const cellKey = `${s.date}|${s.start_time}`;
       if (!map.has(cellKey)) {
-        map.set(cellKey, { booked: null, availableCount: 0, availableTeachers: [], unavailableCount: 0 });
+        map.set(cellKey, {
+          booked: [],
+          availableSlots: [],
+          availableCount: 0,
+          availableTeachers: [],
+          unavailableCount: 0,
+        });
       }
       const cell = map.get(cellKey)!;
 
       if (s.slot_type === "booked") {
-        cell.booked = s;
+        cell.booked.push(s);
       } else if (s.slot_type === "available") {
         cell.availableCount++;
         cell.availableTeachers.push(s.teacher_name);
+        cell.availableSlots.push(s);
       }
     });
 
@@ -688,45 +706,51 @@ export default function AdminCalendar() {
                             key={dayIdx}
                             className={`p-1 border-r border-background-200/70 ${isTodayCell ? "bg-primary-50/30" : ""}`}
                           >
-                            {cell && cell.booked ? (
+                            {cell && cell.booked.length > 0 ? (
                               (() => {
-                                const slot = cell.booked;
-                                const sessCfg = statusConfig[slot.session_status || "available"] || statusConfig.available;
-                                const isEmptyClass = (slot.booked_count || 0) === 0;
+                                const primary = cell.booked[0];
+                                const sessCfg = statusConfig[primary.session_status || "available"] || statusConfig.available;
+                                const isEmptyClass = cell.booked.every((s) => (s.booked_count || 0) === 0);
+                                const tipKey = `desk-booked-${cellKey}`;
+                                const tipOpen = openTooltipKey === tipKey;
                                 return (
-                                  <div className={`relative group/slot w-full p-2 rounded-lg text-xs transition-all ${
-                                    isEmptyClass
-                                      ? "bg-secondary-100 border border-secondary-200 opacity-80"
-                                      : sessCfg.bg
-                                  }`}>
-                                    {/* Hover tooltip */}
-                                    <div className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1 w-64 p-3 rounded-xl bg-foreground-900 text-background-50 text-xs shadow-xl opacity-0 invisible group-hover/slot:opacity-100 group-hover/slot:visible transition-all duration-200 pointer-events-none">
-                                      <p className="font-semibold text-sm mb-1">{slot.class_name || slot.teacher_name}</p>
-                                      <div className="space-y-1 text-foreground-300">
-                                        <p className="flex items-center gap-1.5">
-                                          <i className="ri-user-star-line"></i>
-                                          GV: {slot.teacher_name}
-                                        </p>
-                                        <p className="flex items-center gap-1.5">
-                                          <i className="ri-team-line"></i>
-                                          HV: {slot.all_learner_names && slot.all_learner_names.length > 0
-                                            ? slot.all_learner_names.join(", ")
-                                            : t("calendar.noStudents")}
-                                          <span className="text-foreground-500">({slot.booked_count || 0}/{slot.max_students || 2})</span>
-                                        </p>
-                                        <p className="flex items-center gap-1.5">
-                                          <i className="ri-time-line"></i>
-                                          {formatTime12h(slot.start_time)} – {formatTime12h(slot.end_time)}
-                                        </p>
-                                        <p className="flex items-center gap-1.5">
-                                          <i className="ri-hourglass-line"></i>
-                                          {formatDuration(slot.duration_minutes)}
-                                        </p>
-                                        {slot.session_number && (
-                                          <p className="flex items-center gap-1.5">
-                                            <i className="ri-book-3-line"></i>
-                                            {t("auth.adminCalendarSessionNum", { num: slot.session_number })}
-                                          </p>
+                                  <div
+                                    className={`relative group/slot w-full p-2 rounded-lg text-xs transition-all cursor-pointer ${
+                                      isEmptyClass
+                                        ? "bg-secondary-100 border border-secondary-200 opacity-80"
+                                        : sessCfg.bg
+                                    }`}
+                                    onClick={() => setOpenTooltipKey(tipOpen ? null : tipKey)}
+                                  >
+                                    <div className={`absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1 w-64 p-3 rounded-xl bg-foreground-900 text-background-50 text-xs shadow-xl transition-all duration-200 pointer-events-none ${
+                                      tipOpen ? "opacity-100 visible" : "opacity-0 invisible group-hover/slot:opacity-100 group-hover/slot:visible"
+                                    }`}>
+                                      <p className="font-semibold text-sm mb-1">
+                                        {formatTime12h(primary.start_time)} – {formatTime12h(primary.end_time)}
+                                      </p>
+                                      <div className="space-y-2 text-foreground-300">
+                                        {cell.booked.map((slot, idx) => (
+                                          <div key={slot.schedule_id || `${slot.teacher_id}-${idx}`} className="border-t border-foreground-700 pt-2 first:border-0 first:pt-0">
+                                            <p className="flex items-center gap-1.5 font-medium text-background-50">
+                                              <i className="ri-user-star-line"></i>
+                                              {slot.teacher_name}
+                                            </p>
+                                            <p className="flex items-center gap-1.5 mt-0.5">
+                                              <i className="ri-team-line"></i>
+                                              {slot.booked_count || 0} / {slot.max_students || 2} {t("auth.adminCalendarLearnersBooked")}
+                                            </p>
+                                          </div>
+                                        ))}
+                                        {cell.availableSlots.length > 0 && (
+                                          <div className="border-t border-foreground-700 pt-2">
+                                            <p className="text-accent-300 font-medium mb-1">{t("auth.adminCalendarLegendAvailable")}</p>
+                                            {cell.availableSlots.map((slot, idx) => (
+                                              <p key={`avail-${slot.teacher_id}-${idx}`} className="flex items-center gap-1.5">
+                                                <i className="ri-user-star-line"></i>
+                                                {slot.teacher_name} — 0 / {slot.max_students || 2}
+                                              </p>
+                                            ))}
+                                          </div>
                                         )}
                                       </div>
                                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 w-2 h-2 bg-foreground-900 rotate-45"></div>
@@ -734,13 +758,16 @@ export default function AdminCalendar() {
 
                                     <div className="flex items-center gap-1.5 mb-1">
                                       <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isEmptyClass ? "bg-secondary-400" : sessCfg.dot}`}></span>
-                                      <span className={`font-semibold truncate ${isEmptyClass ? "text-secondary-700" : "text-foreground-900"}`}>{slot.teacher_name}</span>
+                                      <span className={`font-semibold truncate ${isEmptyClass ? "text-secondary-700" : "text-foreground-900"}`}>
+                                        {primary.teacher_name}
+                                        {cell.booked.length > 1 ? ` +${cell.booked.length - 1}` : ""}
+                                      </span>
                                     </div>
-                                    {slot.learner_name && !isEmptyClass && (
+                                    {primary.learner_name && !isEmptyClass && (
                                       <p className="text-[11px] text-foreground-600 truncate mb-0.5">
                                         <i className="ri-user-line mr-0.5"></i>
-                                        {slot.learner_name}
-                                        {(slot.booked_count || 0) > 1 && ` +${(slot.booked_count || 0) - 1}`}
+                                        {primary.learner_name}
+                                        {(primary.booked_count || 0) > 1 && ` +${(primary.booked_count || 0) - 1}`}
                                       </p>
                                     )}
                                     {isEmptyClass && (
@@ -750,33 +777,66 @@ export default function AdminCalendar() {
                                       </p>
                                     )}
                                     <div className="flex items-center gap-1.5 text-[10px] text-foreground-400">
-                                      {slot.session_number && (
-                                        <span className="font-medium">{t("auth.adminCalendarSessionNum", { num: slot.session_number })}</span>
-                                      )}
-                                      {slot.session_number && <span>·</span>}
-                                      <span>{formatDuration(slot.duration_minutes)}</span>
+                                      <span>{formatDuration(primary.duration_minutes)}</span>
                                       <span>·</span>
-                                      <span>{slot.booked_count}/{slot.max_students}</span>
+                                      <span>{primary.booked_count}/{primary.max_students}</span>
+                                      {cell.booked.length > 1 && (
+                                        <>
+                                          <span>·</span>
+                                          <span>{cell.booked.length} GV</span>
+                                        </>
+                                      )}
                                     </div>
-                                    <span className={`inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${getBadgeClass(slot.session_status || "available", isEmptyClass)}`}>
-                                      {isEmptyClass ? t("calendar.emptyBadge") : getStatusLabel(slot)}
-                                    </span>
                                   </div>
                                 );
                               })()
                             ) : cell && cell.availableCount > 0 ? (
-                              <div className="w-full p-2 rounded-lg text-xs bg-accent-50 border border-accent-200">
-                                <div className="flex items-center gap-1.5 mb-1">
-                                  <span className="w-2 h-2 rounded-full flex-shrink-0 bg-accent-500"></span>
-                                  <span className="font-semibold text-accent-800">
-                                    {t("auth.adminCalendarAvailableTeachers", { count: cell.availableCount })}
-                                  </span>
-                                </div>
-                                <p className="text-[10px] text-accent-600 truncate">
-                                  {cell.availableTeachers.slice(0, 2).join(", ")}
-                                  {cell.availableTeachers.length > 2 ? ` +${cell.availableTeachers.length - 2}` : ""}
-                                </p>
-                              </div>
+                              (() => {
+                                const tipKey = `desk-avail-${cellKey}`;
+                                const tipOpen = openTooltipKey === tipKey;
+                                const sample = cell.availableSlots[0];
+                                return (
+                                  <div
+                                    className="relative group/slot w-full p-2 rounded-lg text-xs bg-accent-50 border border-accent-200 cursor-pointer"
+                                    onClick={() => setOpenTooltipKey(tipOpen ? null : tipKey)}
+                                  >
+                                    <div className={`absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1 w-64 p-3 rounded-xl bg-foreground-900 text-background-50 text-xs shadow-xl transition-all duration-200 pointer-events-none ${
+                                      tipOpen ? "opacity-100 visible" : "opacity-0 invisible group-hover/slot:opacity-100 group-hover/slot:visible"
+                                    }`}>
+                                      <p className="font-semibold text-sm mb-1">
+                                        {sample
+                                          ? `${formatTime12h(sample.start_time)} – ${formatTime12h(sample.end_time)}`
+                                          : formatTime12h(time)}
+                                      </p>
+                                      <div className="space-y-1.5 text-foreground-300">
+                                        {cell.availableSlots.map((slot, idx) => (
+                                          <div key={`a-${slot.teacher_id}-${idx}`}>
+                                            <p className="flex items-center gap-1.5 font-medium text-background-50">
+                                              <i className="ri-user-star-line"></i>
+                                              {slot.teacher_name}
+                                            </p>
+                                            <p className="flex items-center gap-1.5 text-foreground-400">
+                                              <i className="ri-team-line"></i>
+                                              0 / {slot.max_students || 2} {t("auth.adminCalendarLearnersBooked")}
+                                            </p>
+                                          </div>
+                                        ))}
+                                      </div>
+                                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 w-2 h-2 bg-foreground-900 rotate-45"></div>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 mb-1">
+                                      <span className="w-2 h-2 rounded-full flex-shrink-0 bg-accent-500"></span>
+                                      <span className="font-semibold text-accent-800">
+                                        {t("auth.adminCalendarAvailableTeachers", { count: cell.availableCount })}
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] text-accent-600 truncate">
+                                      {cell.availableTeachers.slice(0, 2).join(", ")}
+                                      {cell.availableTeachers.length > 2 ? ` +${cell.availableTeachers.length - 2}` : ""}
+                                    </p>
+                                  </div>
+                                );
+                              })()
                             ) : null}
                           </div>
                         );
@@ -814,8 +874,32 @@ export default function AdminCalendar() {
                       <div className="space-y-2">
                         {daySlots.map((slot, sIdx) => {
                           if (slot.slot_type === "available") {
+                            const tipKey = `mob-avail-${slot.teacher_id}-${slot.date}-${slot.start_time}`;
+                            const tipOpen = openTooltipKey === tipKey;
                             return (
-                              <div key={`avail-${sIdx}`} className="p-3 rounded-lg bg-accent-50 border border-accent-200">
+                              <div
+                                key={`avail-${sIdx}`}
+                                className="relative group/slot p-3 rounded-lg bg-accent-50 border border-accent-200 cursor-pointer"
+                                onClick={() => setOpenTooltipKey(tipOpen ? null : tipKey)}
+                              >
+                                <div className={`absolute z-50 top-full right-0 mt-1 w-60 p-3 rounded-xl bg-foreground-900 text-background-50 text-xs shadow-xl transition-all duration-200 pointer-events-none ${
+                                  tipOpen ? "opacity-100 visible" : "opacity-0 invisible group-hover/slot:opacity-100 group-hover/slot:visible"
+                                }`}>
+                                  <p className="font-semibold text-sm mb-1">
+                                    {formatTime12h(slot.start_time)} – {formatTime12h(slot.end_time)}
+                                  </p>
+                                  <div className="space-y-1 text-foreground-300">
+                                    <p className="flex items-center gap-1.5 font-medium text-background-50">
+                                      <i className="ri-user-star-line"></i>
+                                      {slot.teacher_name}
+                                    </p>
+                                    <p className="flex items-center gap-1.5">
+                                      <i className="ri-team-line"></i>
+                                      0 / {slot.max_students || 2} {t("auth.adminCalendarLearnersBooked")}
+                                    </p>
+                                  </div>
+                                  <div className="absolute bottom-full right-4 w-2 h-2 bg-foreground-900 rotate-45"></div>
+                                </div>
                                 <div className="flex items-center gap-2">
                                   <span className="w-2 h-2 rounded-full bg-accent-500"></span>
                                   <span className="font-semibold text-sm text-accent-800">{slot.teacher_name}</span>
@@ -834,32 +918,31 @@ export default function AdminCalendar() {
                           // Booked slot
                           const cfg = statusConfig[slot.session_status || "available"] || statusConfig.available;
                           const isEmptyClass = (slot.booked_count || 0) === 0;
+                          const tipKey = `mob-booked-${slot.schedule_id || sIdx}`;
+                          const tipOpen = openTooltipKey === tipKey;
                           return (
-                            <div key={slot.schedule_id || `booked-${sIdx}`} className={`relative group/slot p-3 rounded-lg ${
+                            <div
+                              key={slot.schedule_id || `booked-${sIdx}`}
+                              className={`relative group/slot p-3 rounded-lg cursor-pointer ${
                               isEmptyClass ? "bg-secondary-100 border border-secondary-200 opacity-80" : cfg.bg
-                            }`}>
-                              {/* Hover tooltip */}
-                              <div className="absolute z-50 top-full right-0 mt-1 w-60 p-3 rounded-xl bg-foreground-900 text-background-50 text-xs shadow-xl opacity-0 invisible group-hover/slot:opacity-100 group-hover/slot:visible transition-all duration-200 pointer-events-none">
-                                <p className="font-semibold text-sm mb-1">{slot.class_name || slot.teacher_name}</p>
+                            }`}
+                              onClick={() => setOpenTooltipKey(tipOpen ? null : tipKey)}
+                            >
+                              {/* Hover / tap tooltip */}
+                              <div className={`absolute z-50 top-full right-0 mt-1 w-60 p-3 rounded-xl bg-foreground-900 text-background-50 text-xs shadow-xl transition-all duration-200 pointer-events-none ${
+                                tipOpen ? "opacity-100 visible" : "opacity-0 invisible group-hover/slot:opacity-100 group-hover/slot:visible"
+                              }`}>
+                                <p className="font-semibold text-sm mb-1">
+                                  {formatTime12h(slot.start_time)} – {formatTime12h(slot.end_time)}
+                                </p>
                                 <div className="space-y-1 text-foreground-300">
-                                  <p className="flex items-center gap-1.5">
+                                  <p className="flex items-center gap-1.5 font-medium text-background-50">
                                     <i className="ri-user-star-line"></i>
-                                    GV: {slot.teacher_name}
+                                    {slot.teacher_name}
                                   </p>
                                   <p className="flex items-center gap-1.5">
                                     <i className="ri-team-line"></i>
-                                    HV: {slot.all_learner_names && slot.all_learner_names.length > 0
-                                      ? slot.all_learner_names.join(", ")
-                                      : "Chưa có học viên"}
-                                    <span className="text-foreground-500">({slot.booked_count || 0}/{slot.max_students || 2})</span>
-                                  </p>
-                                  <p className="flex items-center gap-1.5">
-                                    <i className="ri-time-line"></i>
-                                    {formatTime12h(slot.start_time)} – {formatTime12h(slot.end_time)}
-                                  </p>
-                                  <p className="flex items-center gap-1.5">
-                                    <i className="ri-hourglass-line"></i>
-                                    {formatDuration(slot.duration_minutes)}
+                                    {slot.booked_count || 0} / {slot.max_students || 2} {t("auth.adminCalendarLearnersBooked")}
                                   </p>
                                   {slot.session_number && (
                                     <p className="flex items-center gap-1.5">

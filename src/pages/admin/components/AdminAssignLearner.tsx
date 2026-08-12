@@ -45,6 +45,7 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
   const supabase = getSupabase();
 
   const [learners, setLearners] = useState<Learner[]>([]);
+  const [learnerSearch, setLearnerSearch] = useState("");
   const [selectedLearner, setSelectedLearner] = useState<Learner | null>(null);
   const [learnerSessions, setLearnerSessions] = useState<any[]>([]);
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
@@ -68,10 +69,10 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
     try {
       const { data } = await supabase
         .from("profiles")
-        .select("id, full_name, email")
+        .select("id, full_name, email, is_active")
         .eq("role", "learner")
         .order("full_name");
-      setLearners(data || []);
+      setLearners((data || []).filter((l: any) => l.is_active !== false));
     } catch (err) {
       console.error("Failed to fetch learners:", err);
     } finally {
@@ -496,6 +497,15 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
 
   const selectedSessionData = learnerSessions.find((s) => s.id === selectedSession);
 
+  const filteredLearners = learners.filter((l) => {
+    if (!learnerSearch.trim()) return true;
+    const q = learnerSearch.trim().toLowerCase();
+    return (
+      (l.full_name || "").toLowerCase().includes(q) ||
+      (l.email || "").toLowerCase().includes(q)
+    );
+  });
+
   return (
     <div>
       <div className="mb-8">
@@ -513,26 +523,41 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
           {loadingLearners ? (
             <div className="py-8 text-center text-sm text-foreground-400">{t("auth.adminAssignLoading")}</div>
           ) : (
-            <div className="space-y-1 max-h-80 overflow-y-auto">
-              {learners.map((l) => (
-                <button
-                  key={l.id}
-                  type="button"
-                  onClick={() => handleSelectLearner(l)}
-                  className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition-all cursor-pointer ${
-                    selectedLearner?.id === l.id
-                      ? "bg-primary-50 border border-primary-200 text-primary-800 font-semibold"
-                      : "hover:bg-background-100 text-foreground-700 border border-transparent"
-                  }`}
-                >
-                  <p className="font-medium truncate">{l.full_name}</p>
-                  <p className="text-xs text-foreground-400 truncate">{l.email}</p>
-                </button>
-              ))}
-              {learners.length === 0 && (
-                <p className="text-sm text-foreground-400 py-4 text-center">{t("auth.adminAssignNoLearners")}</p>
-              )}
-            </div>
+            <>
+              <div className="relative mb-3">
+                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                <input
+                  type="text"
+                  value={learnerSearch}
+                  onChange={(e) => setLearnerSearch(e.target.value)}
+                  placeholder={t("auth.adminSearchLearners")}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-background-200 rounded-lg text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20 transition-all"
+                />
+              </div>
+              <div className="space-y-1 max-h-80 overflow-y-auto">
+                {filteredLearners.map((l) => (
+                  <button
+                    key={l.id}
+                    type="button"
+                    onClick={() => handleSelectLearner(l)}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition-all cursor-pointer ${
+                      selectedLearner?.id === l.id
+                        ? "bg-primary-50 border border-primary-200 text-primary-800 font-semibold"
+                        : "hover:bg-background-100 text-foreground-700 border border-transparent"
+                    }`}
+                  >
+                    <p className="font-medium truncate">{l.full_name}</p>
+                    <p className="text-xs text-foreground-400 truncate">{l.email}</p>
+                  </button>
+                ))}
+                {learners.length === 0 && (
+                  <p className="text-sm text-foreground-400 py-4 text-center">{t("auth.adminAssignNoLearners")}</p>
+                )}
+                {learners.length > 0 && filteredLearners.length === 0 && (
+                  <p className="text-sm text-foreground-400 py-4 text-center">{t("auth.adminAssignNoLearners")}</p>
+                )}
+              </div>
+            </>
           )}
         </div>
 

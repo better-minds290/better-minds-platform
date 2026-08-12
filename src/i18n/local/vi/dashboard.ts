@@ -1025,6 +1025,21 @@ const dashboard = {
   "reports.currentSprint": "Sprint hiện tại",
   "reports.viewHistory": "Xem lịch sử",
 
+  "reports.summaryCriticalAbsences": "Vắng ≥ 5 buổi",
+  "reports.absenceTrackedLearners": "{{count}} học viên có vắng",
+  "reports.sectionAbsenceSummary": "Tổng Hợp Vắng Học",
+  "reports.absenceSummaryHint": "Số lần vắng cộng dồn theo khóa học — không reset khi Resolve / Reopen / Force Complete.",
+  "reports.searchAbsence": "Tìm học viên hoặc khóa học...",
+  "reports.noAbsenceData": "Chưa có bản ghi vắng học",
+  "reports.colCourse": "Khóa Học",
+  "reports.colAbsences": "Số Lần Vắng",
+  "reports.colAbsenceStatus": "Trạng Thái",
+  "reports.absenceStatusCritical": "Critical",
+  "reports.absenceStatusUnresolved": "Chưa xử lý",
+  "reports.absenceStatusNormal": "Bình thường",
+  "reports.absenceUnknownCourse": "Khóa học không xác định",
+  "reports.countFilteredAbsences": "{{filtered}} / {{total}} dòng vắng học",
+
   // ── Teacher Honor Section ──
   "honor.title": "Vinh Danh Giáo Viên",
   "honor.subtitle": "Bảng xếp hạng theo tổng số buổi dạy đã hoàn thành trong {{period}}",

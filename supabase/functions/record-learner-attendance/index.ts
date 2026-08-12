@@ -182,12 +182,44 @@ serve(async (req: Request) => {
         );
       }
 
+      const ABSENCE_LIMIT = 5;
+
+      // Idempotent: only count/notify on first not-absent → absent transition
       const { data: existingAttendance } = await supabaseClient
         .from("session_attendance")
-        .select("id")
+        .select("id, status")
         .eq("schedule_id", schedule_id)
         .eq("student_id", student_id)
         .maybeSingle();
+
+      let alreadyAbsent = existingAttendance?.status === "absent";
+
+      if (!alreadyAbsent && session_id) {
+        const { data: sprintSession } = await supabaseClient
+          .from("sprint_sessions")
+          .select("id, status")
+          .eq("id", session_id)
+          .maybeSingle();
+        if (sprintSession?.status === "absent") alreadyAbsent = true;
+      }
+
+      if (!alreadyAbsent && session_id) {
+        const { data: existingIssue } = await supabaseClient
+          .from("learner_attendance")
+          .select("id")
+          .eq("type", "absent_session")
+          .eq("related_session_id", session_id)
+          .eq("learner_id", student_id)
+          .maybeSingle();
+        if (existingIssue) alreadyAbsent = true;
+      }
+
+      if (alreadyAbsent) {
+        return new Response(
+          JSON.stringify({ success: true, marked_absent: true, already_absent: true }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
       if (existingAttendance) {
         await supabaseClient
@@ -250,13 +282,33 @@ serve(async (req: Request) => {
         console.error("Failed to insert learner_attendance:", attErr);
       }
 
+      // Cumulative absence count for this learner+course (never reset by resolve/reopen/FC)
+      let absenceCount = 1;
+      let countQuery = supabaseClient
+        .from("learner_attendance")
+        .select("id", { count: "exact", head: true })
+        .eq("learner_id", student_id)
+        .eq("type", "absent_session");
+
+      if (enrollment_id) {
+        countQuery = countQuery.eq("enrollment_id", enrollment_id);
+      } else if (course_name) {
+        countQuery = countQuery.eq("course_name", course_name);
+      }
+
+      const { count: absenceTotal } = await countQuery;
+      if (typeof absenceTotal === "number" && absenceTotal > 0) {
+        absenceCount = absenceTotal;
+      }
+
       const sprintLabel = sprint_number ? ` Sprint ${sprint_number}` : "";
       const sessionLabel = session_number ? ` Buổi ${session_number}` : "";
+      const courseLabel = course_name ? ` (${course_name})` : "";
 
       await supabaseClient.from("notifications").insert({
         user_id: student_id,
         title: `Bạn Đã Vắng Buổi Học${sprintLabel}${sessionLabel}`,
-        message: `Giáo viên đã ghi nhận bạn vắng mặt trong buổi học${sprintLabel}${sessionLabel}. Hãy cố gắng tham gia đầy đủ các buổi học tiếp theo!`,
+        message: `Bạn đã được ghi nhận vắng buổi học này${courseLabel}. Bạn hiện đã vắng ${absenceCount}/${ABSENCE_LIMIT} buổi.`,
         type: "system",
         is_read: false,
         created_at: new Date().toISOString(),
@@ -264,7 +316,12 @@ serve(async (req: Request) => {
       });
 
       return new Response(
-        JSON.stringify({ success: true, marked_absent: true }),
+        JSON.stringify({
+          success: true,
+          marked_absent: true,
+          absence_count: absenceCount,
+          absence_limit: ABSENCE_LIMIT,
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

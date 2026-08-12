@@ -30,17 +30,32 @@ interface LearnerRating {
   totalRated: number;
 }
 
+interface AbsenceSummaryRow {
+  key: string;
+  learnerId: string;
+  learnerName: string;
+  courseName: string;
+  absenceCount: number;
+  unresolvedCount: number;
+  latestStatus: "unresolved" | "resolved";
+  latestDate: string | null;
+}
+
+const ABSENCE_LIMIT = 5;
+
 export default function AdminReports() {
   const { t } = useTranslation();
   const [teacherHours, setTeacherHours] = useState<TeacherWorkHour[]>([]);
   const [learnerSprints, setLearnerSprints] = useState<LearnerSprint[]>([]);
   const [learnerRatings, setLearnerRatings] = useState<LearnerRating[]>([]);
+  const [absenceSummary, setAbsenceSummary] = useState<AbsenceSummaryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const [searchTeacher, setSearchTeacher] = useState("");
   const [searchSprint, setSearchSprint] = useState("");
   const [searchRating, setSearchRating] = useState("");
+  const [searchAbsence, setSearchAbsence] = useState("");
 
   const [sortTeacherKey, setSortTeacherKey] = useState<"name" | "hours">("hours");
   const [sortTeacherDir, setSortTeacherDir] = useState<"asc" | "desc">("desc");
@@ -48,6 +63,8 @@ export default function AdminReports() {
   const [sortSprintDir, setSortSprintDir] = useState<"asc" | "desc">("desc");
   const [sortRatingKey, setSortRatingKey] = useState<"name" | "rating">("rating");
   const [sortRatingDir, setSortRatingDir] = useState<"asc" | "desc">("desc");
+  const [sortAbsenceKey, setSortAbsenceKey] = useState<"name" | "absences">("absences");
+  const [sortAbsenceDir, setSortAbsenceDir] = useState<"asc" | "desc">("desc");
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -67,16 +84,19 @@ export default function AdminReports() {
         teacherMap.set(p.id, { name: p.full_name || "Unknown", email: p.email || "", role: p.role })
       );
 
-      // ── Fetch learner profiles ──
+      // ── Fetch learner profiles (active only for operational reports) ──
       const { data: learnerProfiles } = await supabase
         .from("profiles")
-        .select("id, full_name, email")
+        .select("id, full_name, email, is_active")
         .eq("role", "learner");
 
+      const activeLearnerIds = new Set<string>();
       const learnerMap = new Map<string, { name: string; email: string }>();
-      (learnerProfiles || []).forEach((p) =>
-        learnerMap.set(p.id, { name: p.full_name || "Unknown", email: p.email || "" })
-      );
+      (learnerProfiles || []).forEach((p) => {
+        if (p.is_active === false) return;
+        activeLearnerIds.add(p.id);
+        learnerMap.set(p.id, { name: p.full_name || "Unknown", email: p.email || "" });
+      });
 
       // ── Fetch all sprint_sessions (completed and total) ──
       const { data: sessions } = await supabase
@@ -133,13 +153,13 @@ export default function AdminReports() {
 
       // ── Learner sprints completed ──
       const learnerSprintMap = new Map<string, { total: number; completed: number; active: number }>();
-      learnerProfiles?.forEach((lp) => {
-        learnerSprintMap.set(lp.id, { total: 0, completed: 0, active: 0 });
+      activeLearnerIds.forEach((id) => {
+        learnerSprintMap.set(id, { total: 0, completed: 0, active: 0 });
       });
 
       allSprints.forEach((sp) => {
         const learnerId = enrollmentLearnerMap.get(sp.enrollment_id);
-        if (!learnerId) return;
+        if (!learnerId || !activeLearnerIds.has(learnerId)) return;
         const entry = learnerSprintMap.get(learnerId) || { total: 0, completed: 0, active: 0 };
         entry.total++;
         if (sp.status === "completed") entry.completed++;
@@ -167,8 +187,8 @@ export default function AdminReports() {
       allSprints.forEach((sp) => sprintIdToEnrollment.set(sp.id, sp.enrollment_id));
 
       const learnerRatingMap = new Map<string, { ratings: number[] }>();
-      learnerProfiles?.forEach((lp) => {
-        learnerRatingMap.set(lp.id, { ratings: [] });
+      activeLearnerIds.forEach((id) => {
+        learnerRatingMap.set(id, { ratings: [] });
       });
 
       allSessions.forEach((s) => {
@@ -176,7 +196,7 @@ export default function AdminReports() {
         const enrollmentId = sprintIdToEnrollment.get(s.sprint_id);
         if (!enrollmentId) return;
         const learnerId = enrollmentLearnerMap.get(enrollmentId);
-        if (!learnerId) return;
+        if (!learnerId || !activeLearnerIds.has(learnerId)) return;
         const entry = learnerRatingMap.get(learnerId) || { ratings: [] };
         entry.ratings.push(s.completion_rating);
         learnerRatingMap.set(learnerId, entry);
@@ -198,13 +218,61 @@ export default function AdminReports() {
         });
 
       setLearnerRatings(learnerRatingsList);
+
+      // ── Absence summary (cumulative from learner_attendance, never reset) ──
+      const { data: absenceRows } = await supabase
+        .from("learner_attendance")
+        .select("id, learner_id, enrollment_id, course_name, learner_name, resolved, date, created_at")
+        .eq("type", "absent_session")
+        .order("created_at", { ascending: false });
+
+      const absenceAgg = new Map<
+        string,
+        {
+          learnerId: string;
+          learnerName: string;
+          courseName: string;
+          absenceCount: number;
+          unresolvedCount: number;
+          latestStatus: "unresolved" | "resolved";
+          latestDate: string | null;
+        }
+      >();
+
+      (absenceRows || []).forEach((row) => {
+        if (!row.learner_id || !activeLearnerIds.has(row.learner_id)) return;
+        const courseName = row.course_name || t("reports.absenceUnknownCourse");
+        const key = `${row.learner_id}|${row.enrollment_id || courseName}`;
+        const profile = learnerMap.get(row.learner_id);
+        const existing = absenceAgg.get(key);
+        if (!existing) {
+          absenceAgg.set(key, {
+            learnerId: row.learner_id,
+            learnerName: profile?.name || row.learner_name || "Unknown",
+            courseName,
+            absenceCount: 1,
+            unresolvedCount: row.resolved ? 0 : 1,
+            latestStatus: row.resolved ? "resolved" : "unresolved",
+            latestDate: row.date || row.created_at || null,
+          });
+        } else {
+          existing.absenceCount += 1;
+          if (!row.resolved) existing.unresolvedCount += 1;
+        }
+      });
+
+      const absenceList: AbsenceSummaryRow[] = Array.from(absenceAgg.entries()).map(([key, v]) => ({
+        key,
+        ...v,
+      }));
+      setAbsenceSummary(absenceList);
     } catch (err) {
       console.error("Failed to fetch reports:", err);
       setError(t("reports.loadError"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     fetchReports();
@@ -277,9 +345,24 @@ export default function AdminReports() {
       return sortRatingDir === "asc" ? cmp : -cmp;
     });
 
+  const filteredAbsences = absenceSummary
+    .filter(
+      (row) =>
+        !searchAbsence ||
+        row.learnerName.toLowerCase().includes(searchAbsence.toLowerCase()) ||
+        row.courseName.toLowerCase().includes(searchAbsence.toLowerCase())
+    )
+    .sort((a, b) => {
+      let cmp = 0;
+      if (sortAbsenceKey === "name") cmp = a.learnerName.localeCompare(b.learnerName);
+      else if (sortAbsenceKey === "absences") cmp = a.absenceCount - b.absenceCount;
+      return sortAbsenceDir === "asc" ? cmp : -cmp;
+    });
+
   // ── Summary stats ──
   const totalTeacherHours = teacherHours.reduce((sum, t) => sum + t.totalHours, 0);
   const totalCompletedSprints = learnerSprints.reduce((sum, l) => sum + l.completedSprints, 0);
+  const criticalAbsences = absenceSummary.filter((r) => r.absenceCount >= ABSENCE_LIMIT).length;
   const allRatings = learnerRatings.flatMap((l) => (l.avgRating > 0 ? [l.avgRating] : []));
   const systemAvgRating =
     allRatings.length > 0
@@ -339,7 +422,7 @@ export default function AdminReports() {
       <TeacherHonorSection />
 
       {/* ── Summary cards ── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <div className="p-5 rounded-xl bg-background-50 border border-background-200">
           <div className="flex items-center gap-2 mb-3">
             <div className="w-9 h-9 flex items-center justify-center rounded-lg bg-primary-100 text-primary-600">
@@ -372,6 +455,129 @@ export default function AdminReports() {
           </p>
           <p className="text-xs text-foreground-400 mt-1">{t("reports.outOfScale")}</p>
         </div>
+        <div className="p-5 rounded-xl bg-background-50 border border-background-200">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-9 h-9 flex items-center justify-center rounded-lg bg-accent-100 text-accent-700">
+              <i className="ri-user-unfollow-line text-base"></i>
+            </div>
+          </div>
+          <p className="text-xs text-foreground-400 mb-0.5">{t("reports.summaryCriticalAbsences")}</p>
+          <p className="font-heading text-2xl font-bold text-foreground-950">{criticalAbsences}</p>
+          <p className="text-xs text-foreground-400 mt-1">
+            {t("reports.absenceTrackedLearners", { count: absenceSummary.length })}
+          </p>
+        </div>
+      </div>
+
+      {/* ═══════════ Absence Summary ═══════════ */}
+      <div className="mb-10">
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <div>
+            <h3 className="font-heading text-base font-bold text-foreground-900">
+              {t("reports.sectionAbsenceSummary")}
+            </h3>
+            <p className="text-xs text-foreground-500 mt-0.5">{t("reports.absenceSummaryHint")}</p>
+          </div>
+          <div className="relative">
+            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <input
+              type="text"
+              value={searchAbsence}
+              onChange={(e) => setSearchAbsence(e.target.value)}
+              placeholder={t("reports.searchAbsence")}
+              className="pl-9 pr-3 py-2 text-sm bg-background-50 border border-background-200 rounded-lg text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20"
+            />
+          </div>
+        </div>
+
+        {filteredAbsences.length === 0 ? (
+          <div className="p-8 rounded-xl border border-background-200 bg-background-50 text-center text-sm text-foreground-400">
+            {t("reports.noAbsenceData")}
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-background-200">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-background-100/70">
+                  <th
+                    className="text-left px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider cursor-pointer"
+                    onClick={() =>
+                      handleSort("name", setSortAbsenceKey, setSortAbsenceDir, sortAbsenceKey, sortAbsenceDir)
+                    }
+                  >
+                    {t("reports.colLearner")}
+                    {sortAbsenceKey === "name" && (
+                      <i className={`ri-arrow-${sortAbsenceDir === "asc" ? "up" : "down"}-s-line ml-1`}></i>
+                    )}
+                  </th>
+                  <th className="text-left px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider">
+                    {t("reports.colCourse")}
+                  </th>
+                  <th
+                    className="text-center px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider cursor-pointer"
+                    onClick={() =>
+                      handleSort("absences", setSortAbsenceKey, setSortAbsenceDir, sortAbsenceKey, sortAbsenceDir)
+                    }
+                  >
+                    {t("reports.colAbsences")}
+                    {sortAbsenceKey === "absences" && (
+                      <i className={`ri-arrow-${sortAbsenceDir === "asc" ? "up" : "down"}-s-line ml-1`}></i>
+                    )}
+                  </th>
+                  <th className="text-center px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider">
+                    {t("reports.colAbsenceStatus")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-background-200">
+                {filteredAbsences.map((row) => {
+                  const isCritical = row.absenceCount >= ABSENCE_LIMIT;
+                  return (
+                    <tr key={row.key} className="hover:bg-background-50/70 transition-colors duration-150">
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 flex items-center justify-center rounded-full font-semibold text-xs flex-shrink-0 ${
+                            isCritical ? "bg-accent-100 text-accent-700" : "bg-secondary-100 text-secondary-700"
+                          }`}>
+                            {row.learnerName.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="font-medium text-foreground-900 whitespace-nowrap">{row.learnerName}</span>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5 text-foreground-600">{row.courseName}</td>
+                      <td className="px-5 py-3.5 text-center">
+                        <span className={`font-bold ${isCritical ? "text-accent-700" : "text-foreground-900"}`}>
+                          {row.absenceCount} / {ABSENCE_LIMIT}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5 text-center">
+                        {isCritical ? (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-accent-100 text-accent-800">
+                            {t("reports.absenceStatusCritical")}
+                          </span>
+                        ) : row.unresolvedCount > 0 ? (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800">
+                            {t("reports.absenceStatusUnresolved")}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-50 text-primary-700">
+                            {t("reports.absenceStatusNormal")}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="mt-3 text-xs text-foreground-400">
+          {t("reports.countFilteredAbsences", {
+            filtered: filteredAbsences.length,
+            total: absenceSummary.length,
+          })}
+        </p>
       </div>
 
       {/* ═══════════ SECTION 1: Teacher Working Hours ═══════════ */}
