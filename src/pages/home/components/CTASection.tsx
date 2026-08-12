@@ -13,7 +13,7 @@ export default function CTASection() {
           {t("cta.subtitle")}
         </p>
         <a
-          href="https://forms.gle/MH9EnrMrfhZr3roaA"
+          href="https://forms.gle/hC6pbhuFBSmUaxQs6"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center px-8 py-3.5 rounded-full text-sm md:text-base font-semibold bg-primary-500 text-background-50 hover:bg-primary-600 transition-all duration-200 whitespace-nowrap cursor-pointer"

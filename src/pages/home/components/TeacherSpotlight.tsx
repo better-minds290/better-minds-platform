@@ -68,7 +68,7 @@ export default function TeacherSpotlight() {
                   </div>
                 </div>
                 <a
-                  href="https://forms.gle/KWPfa1t9UF1bp2KQ9"
+                  href="https://forms.gle/xcqKyYQM5XmqVEKB8"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium bg-background-50/15 text-background-50 hover:bg-background-50/25 transition-colors duration-200 cursor-pointer whitespace-nowrap"

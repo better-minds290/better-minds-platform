@@ -374,7 +374,7 @@ export default function CoursesPage() {
               {t("cta.subtitle")}
             </p>
             <a
-              href="https://forms.gle/MH9EnrMrfhZr3roaA"
+              href="https://forms.gle/hC6pbhuFBSmUaxQs6"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-8 py-3 rounded-lg text-sm font-semibold bg-primary-500 text-background-50 hover:bg-primary-600 transition-colors duration-200 whitespace-nowrap cursor-pointer"

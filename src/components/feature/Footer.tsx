@@ -90,7 +90,7 @@ export default function Footer() {
             </h4>
             <div className="flex flex-col gap-2.5">
               <a
-                href="https://forms.gle/MH9EnrMrfhZr3roaA"
+                href="https://forms.gle/hC6pbhuFBSmUaxQs6"
                 target="_blank"
                 rel="noopener noreferrer nofollow"
                 className="text-sm text-background-300 hover:text-background-50 transition-colors duration-200 cursor-pointer inline-flex items-center gap-1.5"
@@ -99,7 +99,7 @@ export default function Footer() {
                 {t("footer.registerLearner")}
               </a>
               <a
-                href="https://forms.gle/KWPfa1t9UF1bp2KQ9"
+                href="https://forms.gle/xcqKyYQM5XmqVEKB8"
                 target="_blank"
                 rel="noopener noreferrer nofollow"
                 className="text-sm text-background-300 hover:text-background-50 transition-colors duration-200 cursor-pointer inline-flex items-center gap-1.5"

@@ -5,8 +5,8 @@ export default function HeroSection() {
   const { t } = useTranslation();
 
   // Google Form URLs
-  const learnerFormUrl = "https://forms.gle/MH9EnrMrfhZr3roaA";
-  const teacherFormUrl = "https://forms.gle/KWPfa1t9UF1bp2KQ9";
+  const learnerFormUrl = "https://forms.gle/hC6pbhuFBSmUaxQs6";
+  const teacherFormUrl = "https://forms.gle/xcqKyYQM5XmqVEKB8";
 
   return (
     <section className="relative w-full h-[560px] md:h-[720px] flex items-center justify-center overflow-hidden">
