@@ -398,7 +398,17 @@ function BookingCalendarContent() {
         });
       });
 
-      setSlots(mappedSlots);
+      // One bookable option per teacher per date+time (keep distinct teachers; drop duplicate source rows)
+      const seenSlotKeys = new Set<string>();
+      const uniqueSlots: TeacherSlot[] = [];
+      for (const s of mappedSlots) {
+        const key = `${s.teacher_id}-${s.date}-${s.start_time}`;
+        if (seenSlotKeys.has(key)) continue;
+        seenSlotKeys.add(key);
+        uniqueSlots.push(s);
+      }
+
+      setSlots(uniqueSlots);
     } catch (err) {
       console.error("Failed to fetch booking data:", err);
       showToast("error", "Unable to load available slots. Please try again.");
@@ -653,10 +663,21 @@ function BookingCalendarContent() {
             max_students: cls?.max || 2,
             is_my_booking: false,
             is_completed: false,
+            enrolled_names: [],
           };
         });
 
-      setRescheduleSlots(mappedSlots);
+      // One option per teacher per date+time
+      const seenSlotKeys = new Set<string>();
+      const uniqueSlots: TeacherSlot[] = [];
+      for (const s of mappedSlots) {
+        const key = `${s.teacher_id}-${s.date}-${s.start_time}`;
+        if (seenSlotKeys.has(key)) continue;
+        seenSlotKeys.add(key);
+        uniqueSlots.push(s);
+      }
+
+      setRescheduleSlots(uniqueSlots);
     } catch (err) {
       console.error("Failed to load reschedule slots:", err);
       showToast("error", t("booking.failedToLoad"));
@@ -993,11 +1014,7 @@ function BookingCalendarContent() {
                         {daysOfWeek.map((day, dayIdx) => {
                           const dateStr = toLocalDateStr(day);
                           const daySlots = slotsByDay[dateStr] || [];
-                          const slot = daySlots.find((s) => s.start_time === time);
-                          const isFull = slot ? slot.booked_count >= slot.max_students : false;
-                          const isMine = slot ? slot.is_my_booking : false;
-                          const isDone = slot ? slot.is_completed : false;
-                          const isPassed = slot ? isSlotTimePassed(slot) : false;
+                          const cellSlots = daySlots.filter((s) => s.start_time === time);
                           const isTodayCell = isToday(day);
                           const isPast = day < new Date(new Date().setHours(0, 0, 0, 0));
 
@@ -1006,82 +1023,92 @@ function BookingCalendarContent() {
                               key={dayIdx}
                               className={`p-1 border-r border-background-200/70 ${isTodayCell ? "bg-primary-50/30" : ""}`}
                             >
-                              {slot && (
-                                <div className="relative group/slot">
-                                  {/* Hover tooltip */}
-                                  <div className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1 w-60 p-3 rounded-xl bg-foreground-900 text-background-50 text-xs shadow-xl opacity-0 invisible group-hover/slot:opacity-100 group-hover/slot:visible transition-all duration-200 pointer-events-none">
-                                    <p className="font-semibold text-sm mb-1.5">{slot.teacher_name}</p>
-                                    <div className="space-y-1 text-foreground-300">
-                                      <p className="flex items-center gap-1.5">
-                                        <i className="ri-time-line"></i>
-                                        {formatTime12h(slot.start_time)} – {formatTime12h(slot.end_time)}
-                                      </p>
-                                      <p className="flex items-center gap-1.5">
-                                        <i className="ri-hourglass-line"></i>
-                                        {formatDuration(slot.duration_minutes)}
-                                      </p>
-                                      <p className="flex items-center gap-1.5">
-                                        <i className="ri-user-line"></i>
-                                        {slot.enrolled_names.length > 0
-                                          ? slot.enrolled_names.join(", ")
-                                          : t("booking.noStudents")}
-                                        <span className="text-foreground-500">({slot.booked_count}/{slot.max_students})</span>
-                                      </p>
-                                    </div>
-                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 w-2 h-2 bg-foreground-900 rotate-45"></div>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (isMine) {
-                                        handleRescheduleClick(slot);
-                                      } else {
-                                        handleSlotClick(slot);
-                                      }
-                                    }}
-                                    disabled={(!isMine && isFull) || isPast || isDone || isPassed || (!isMine && (bookableSessions.length === 0 || !bookingSessionId))}
-                                    className={`w-full text-left p-2 rounded-lg text-xs transition-all duration-150 flex items-center gap-1.5 overflow-hidden ${
-                                      isDone
-                                        ? "bg-secondary-100 text-secondary-700 cursor-default border border-secondary-200"
-                                        : isMine
-                                          ? "bg-primary-100 text-primary-700 cursor-pointer border border-primary-200 hover:bg-primary-200 pr-8"
-                                          : isFull
-                                            ? "bg-foreground-100 text-foreground-600 cursor-not-allowed border border-foreground-200"
-                                            : "bg-accent-50 text-accent-800 cursor-pointer border border-accent-200 hover:bg-accent-100"
-                                    }`}
-                                  >
-                                    {/* Status color bar */}
-                                    <div className={`w-2.5 h-6 rounded-full shrink-0 ${
-                                      isDone ? "bg-secondary-500" :
-                                      isMine ? "bg-primary-500" :
-                                      isFull ? "bg-foreground-500" :
-                                      "bg-accent-500"
-                                    }`}></div>
-                                    <span className="font-semibold truncate flex-1">{slot.teacher_name}</span>
-                                    {isFull && <span className="text-[9px] px-1 py-0.5 rounded bg-foreground-200 text-foreground-700 font-bold shrink-0">{t("booking.fullLabel")}</span>}
-                                    {isDone ? (
-                                      <span className="text-[10px] flex-shrink-0 text-secondary-500">{t("booking.completedLabel")}</span>
-                                    ) : isMine ? (
-                                      <span className="inline-flex items-center gap-0.5 text-[10px] flex-shrink-0">
-                                        <i className="ri-user-line text-primary-500"></i>
-                                        <i className="ri-arrow-left-right-line text-primary-400"></i>
-                                      </span>
-                                    ) : isFull ? (
-                                      <span className="text-[10px] flex-shrink-0 font-medium">{slot.booked_count}/{slot.max_students}</span>
-                                    ) : (
-                                      <span className="text-[10px] flex-shrink-0">{formatDuration(slot.duration_minutes)}</span>
-                                    )}
-                                  </button>
-                                  {isMine && !isDone && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => { e.stopPropagation(); handleCancelClick(slot); }}
-                                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-accent-100 text-accent-500 hover:bg-accent-200 hover:text-accent-600 opacity-100 md:opacity-0 md:group-hover/slot:opacity-100 transition-opacity cursor-pointer"
-                                      title={t("booking.cancelTooltip")}
-                                    >
-                                      <i className="ri-arrow-right-s-line text-[10px]"></i>
-                                    </button>
-                                  )}
+                              {cellSlots.length > 0 && (
+                                <div className="space-y-1">
+                                  {cellSlots.map((slot) => {
+                                    const isFull = slot.booked_count >= slot.max_students;
+                                    const isMine = slot.is_my_booking;
+                                    const isDone = slot.is_completed;
+                                    const isPassed = isSlotTimePassed(slot);
+                                    return (
+                                      <div key={`${slot.teacher_id}-${slot.availability_id}`} className="relative group/slot">
+                                        {/* Hover tooltip */}
+                                        <div className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1 w-60 p-3 rounded-xl bg-foreground-900 text-background-50 text-xs shadow-xl opacity-0 invisible group-hover/slot:opacity-100 group-hover/slot:visible transition-all duration-200 pointer-events-none">
+                                          <p className="font-semibold text-sm mb-1.5">{slot.teacher_name}</p>
+                                          <div className="space-y-1 text-foreground-300">
+                                            <p className="flex items-center gap-1.5">
+                                              <i className="ri-time-line"></i>
+                                              {formatTime12h(slot.start_time)} – {formatTime12h(slot.end_time)}
+                                            </p>
+                                            <p className="flex items-center gap-1.5">
+                                              <i className="ri-hourglass-line"></i>
+                                              {formatDuration(slot.duration_minutes)}
+                                            </p>
+                                            <p className="flex items-center gap-1.5">
+                                              <i className="ri-user-line"></i>
+                                              {slot.enrolled_names.length > 0
+                                                ? slot.enrolled_names.join(", ")
+                                                : t("booking.noStudents")}
+                                              <span className="text-foreground-500">({slot.booked_count}/{slot.max_students})</span>
+                                            </p>
+                                          </div>
+                                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 w-2 h-2 bg-foreground-900 rotate-45"></div>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (isMine) {
+                                              handleRescheduleClick(slot);
+                                            } else {
+                                              handleSlotClick(slot);
+                                            }
+                                          }}
+                                          disabled={(!isMine && isFull) || isPast || isDone || isPassed || (!isMine && (bookableSessions.length === 0 || !bookingSessionId))}
+                                          className={`w-full text-left p-2 rounded-lg text-xs transition-all duration-150 flex items-center gap-1.5 overflow-hidden ${
+                                            isDone
+                                              ? "bg-secondary-100 text-secondary-700 cursor-default border border-secondary-200"
+                                              : isMine
+                                                ? "bg-primary-100 text-primary-700 cursor-pointer border border-primary-200 hover:bg-primary-200 pr-8"
+                                                : isFull
+                                                  ? "bg-foreground-100 text-foreground-600 cursor-not-allowed border border-foreground-200"
+                                                  : "bg-accent-50 text-accent-800 cursor-pointer border border-accent-200 hover:bg-accent-100"
+                                          }`}
+                                        >
+                                          {/* Status color bar */}
+                                          <div className={`w-2.5 h-6 rounded-full shrink-0 ${
+                                            isDone ? "bg-secondary-500" :
+                                            isMine ? "bg-primary-500" :
+                                            isFull ? "bg-foreground-500" :
+                                            "bg-accent-500"
+                                          }`}></div>
+                                          <span className="font-semibold truncate flex-1">{slot.teacher_name}</span>
+                                          {isFull && <span className="text-[9px] px-1 py-0.5 rounded bg-foreground-200 text-foreground-700 font-bold shrink-0">{t("booking.fullLabel")}</span>}
+                                          {isDone ? (
+                                            <span className="text-[10px] flex-shrink-0 text-secondary-500">{t("booking.completedLabel")}</span>
+                                          ) : isMine ? (
+                                            <span className="inline-flex items-center gap-0.5 text-[10px] flex-shrink-0">
+                                              <i className="ri-user-line text-primary-500"></i>
+                                              <i className="ri-arrow-left-right-line text-primary-400"></i>
+                                            </span>
+                                          ) : isFull ? (
+                                            <span className="text-[10px] flex-shrink-0 font-medium">{slot.booked_count}/{slot.max_students}</span>
+                                          ) : (
+                                            <span className="text-[10px] flex-shrink-0">{formatDuration(slot.duration_minutes)}</span>
+                                          )}
+                                        </button>
+                                        {isMine && !isDone && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); handleCancelClick(slot); }}
+                                            className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-accent-100 text-accent-500 hover:bg-accent-200 hover:text-accent-600 opacity-100 md:opacity-0 md:group-hover/slot:opacity-100 transition-opacity cursor-pointer"
+                                            title={t("booking.cancelTooltip")}
+                                          >
+                                            <i className="ri-arrow-right-s-line text-[10px]"></i>
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               )}
                             </div>
