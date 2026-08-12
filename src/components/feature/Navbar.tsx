@@ -64,26 +64,28 @@ export default function Navbar() {
       }`}
     >
       <div className="w-full px-4 md:px-6">
-        <div className="flex items-center justify-between h-16 md:h-18">
-          <a href="/" className="flex items-center gap-2 group cursor-pointer">
-            <span className="font-heading text-xl md:text-2xl font-bold text-primary-600 tracking-tight">
-              Better Minds
-            </span>
-          </a>
+        <div className="flex items-center justify-between h-16 md:h-18 gap-4">
+          <div className="flex items-center gap-4 md:gap-6 min-w-0">
+            <a href="/" className="flex items-center gap-2 group cursor-pointer flex-shrink-0">
+              <span className="font-heading text-xl md:text-2xl font-bold text-primary-600 tracking-tight">
+                Better Minds
+              </span>
+            </a>
 
-          <div className="hidden md:flex items-center gap-8">
-            {navLinks.map((link) => (
-              <a
-                key={link.key}
-                href={link.href}
-                className="text-sm font-medium text-foreground-600 hover:text-primary-600 transition-colors duration-200 whitespace-nowrap cursor-pointer"
-              >
-                {t(link.key)}
-              </a>
-            ))}
+            <div className="hidden md:flex items-center gap-4 lg:gap-6 min-w-0">
+              {navLinks.map((link) => (
+                <a
+                  key={link.key}
+                  href={link.href}
+                  className="text-sm font-medium text-foreground-600 hover:text-primary-600 transition-colors duration-200 whitespace-nowrap cursor-pointer"
+                >
+                  {t(link.key)}
+                </a>
+              ))}
+            </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-3">
+          <div className="hidden md:flex items-center gap-3 flex-shrink-0">
             <button
               onClick={toggleLanguage}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold bg-background-100 text-foreground-700 hover:bg-background-200 border border-background-200/70 transition-all duration-200 whitespace-nowrap cursor-pointer"
@@ -117,7 +119,7 @@ export default function Navbar() {
 
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
-            className="md:hidden w-10 h-10 flex items-center justify-center text-foreground-700 cursor-pointer"
+            className="md:hidden w-10 h-10 flex items-center justify-center text-foreground-700 cursor-pointer flex-shrink-0"
             aria-label="Toggle menu"
           >
             <i className={`text-xl ${mobileOpen ? "ri-close-line" : "ri-menu-line"}`}></i>

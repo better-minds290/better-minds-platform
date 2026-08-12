@@ -73,18 +73,18 @@ function TeacherDashboardContent() {
     <div className="min-h-screen bg-background-50">
       <header className="bg-background-50 border-b border-background-200/70 sticky top-0 z-40">
         <div className="w-full px-4 md:px-6">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-6">
-              <Link to="/" className="font-heading text-xl font-bold text-primary-600 cursor-pointer">
+          <div className="flex items-center justify-between h-16 gap-3">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <Link to="/" className="font-heading text-xl font-bold text-primary-600 cursor-pointer flex-shrink-0 whitespace-nowrap">
                 Better Minds
               </Link>
-              <nav className="hidden md:flex items-center bg-background-100 rounded-full p-0.5 overflow-x-auto">
+              <nav className="hidden md:flex items-center bg-background-100 rounded-full p-0.5 min-w-0 flex-1 overflow-x-auto">
                 {tabs.map((tab) => (
                   <button
                     key={tab.key}
                     type="button"
                     onClick={() => handleTabChange(tab.key)}
-                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 cursor-pointer whitespace-nowrap ${
+                    className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 cursor-pointer whitespace-nowrap ${
                       activeTab === tab.key
                         ? "bg-background-50 text-foreground-950 shadow-sm"
                         : "text-foreground-500 hover:text-foreground-700"
@@ -96,7 +96,7 @@ function TeacherDashboardContent() {
                 ))}
               </nav>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-shrink-0">
               <Link
                 to="/teacher/profile"
                 className="w-8 h-8 flex items-center justify-center rounded-full bg-background-100 text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-colors cursor-pointer"
@@ -109,7 +109,7 @@ function TeacherDashboardContent() {
                 <div className="w-8 h-8 flex items-center justify-center rounded-full bg-accent-100 text-accent-700 font-semibold text-sm">
                   {profile?.full_name?.charAt(0)?.toUpperCase() || "T"}
                 </div>
-                <span className="text-sm font-medium text-foreground-700 hidden lg:inline">
+                <span className="text-sm font-medium text-foreground-700 hidden lg:inline truncate max-w-[10rem]">
                   {profile?.full_name}
                 </span>
               </div>

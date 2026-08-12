@@ -161,15 +161,50 @@ export default function AdminCourses() {
       if (enrollments && enrollments.length > 0) {
         const enrollmentIds = enrollments.map((e) => e.id);
 
-        // 2. Find and delete learning sprints & sessions for these enrollments
+        // 2. Find learning sprints & sessions for these enrollments
         const { data: sprints, error: sprintErr } = await supabase
           .from("learning_sprints")
           .select("id")
           .in("enrollment_id", enrollmentIds);
         if (sprintErr) throw new Error(`Failed to fetch sprints: ${sprintErr.message}`);
 
-        if (sprints && sprints.length > 0) {
-          const sprintIds = sprints.map((s) => s.id);
+        const sprintIds = (sprints || []).map((s) => s.id);
+
+        // 2a. Clean learner_attendance first (FK often blocks sprint/enrollment deletes)
+        const { error: attByEnrollErr } = await supabase
+          .from("learner_attendance")
+          .delete()
+          .in("enrollment_id", enrollmentIds);
+        if (attByEnrollErr) {
+          throw new Error(`Failed to delete learner attendance: ${attByEnrollErr.message}`);
+        }
+
+        if (sprintIds.length > 0) {
+          const { data: sessions, error: sessFetchErr } = await supabase
+            .from("sprint_sessions")
+            .select("id")
+            .in("sprint_id", sprintIds);
+          if (sessFetchErr) throw new Error(`Failed to fetch sprint sessions: ${sessFetchErr.message}`);
+
+          const sessionIds = (sessions || []).map((s) => s.id);
+
+          if (sessionIds.length > 0) {
+            const { error: attBySessionErr } = await supabase
+              .from("learner_attendance")
+              .delete()
+              .in("related_session_id", sessionIds);
+            if (attBySessionErr) {
+              throw new Error(`Failed to delete session-linked attendance: ${attBySessionErr.message}`);
+            }
+          }
+
+          const { error: attBySprintErr } = await supabase
+            .from("learner_attendance")
+            .delete()
+            .in("related_sprint_id", sprintIds);
+          if (attBySprintErr) {
+            throw new Error(`Failed to delete sprint-linked attendance: ${attBySprintErr.message}`);
+          }
 
           const { error: sessDelErr } = await supabase
             .from("sprint_sessions")
@@ -204,32 +239,13 @@ export default function AdminCourses() {
         }
       }
 
-      // 5. Unlink classes from this course (set course_id to null, don't delete classes)
-      const { data: linkedClasses } = await supabase
+      // 5. Unlink classes from this course (keep class rosters intact)
+      const { error: classUpdateErr } = await supabase
         .from("classes")
-        .select("id")
+        .update({ course_id: null })
         .eq("course_id", courseId);
-
-      if (linkedClasses && linkedClasses.length > 0) {
-        const classIds = linkedClasses.map((c) => c.id);
-
-        // Delete class_enrollments for these classes first
-        const { error: classEnrollDelErr } = await supabase
-          .from("class_enrollments")
-          .delete()
-          .in("class_id", classIds);
-        if (classEnrollDelErr) {
-          console.warn("Failed to delete class_enrollments (non-fatal):", classEnrollDelErr);
-        }
-
-        // Unlink classes from course
-        const { error: classUpdateErr } = await supabase
-          .from("classes")
-          .update({ course_id: null })
-          .eq("course_id", courseId);
-        if (classUpdateErr) {
-          console.warn("Failed to unlink classes (non-fatal):", classUpdateErr);
-        }
+      if (classUpdateErr) {
+        throw new Error(`Failed to unlink classes from course: ${classUpdateErr.message}`);
       }
 
       // 6. Delete sprint templates
@@ -238,7 +254,7 @@ export default function AdminCourses() {
         .delete()
         .eq("course_id", courseId);
       if (tmplDelErr) {
-        console.warn("Failed to delete sprint templates (non-fatal):", tmplDelErr);
+        throw new Error(`Failed to delete sprint templates: ${tmplDelErr.message}`);
       }
 
       // 7. Finally delete the course
@@ -246,7 +262,7 @@ export default function AdminCourses() {
         .from("courses")
         .delete()
         .eq("id", courseId);
-      if (courseDelErr) throw courseDelErr;
+      if (courseDelErr) throw new Error(`Failed to delete course: ${courseDelErr.message}`);
 
       showToast("success", t("auth.adminCourseDeleteSuccess"));
       setDeleteTarget(null);
@@ -254,7 +270,7 @@ export default function AdminCourses() {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("Delete course error:", message);
-      showToast("error", message.includes("Không thể") ? message : t("auth.adminCourseError"));
+      showToast("error", message || t("auth.adminCourseError"));
     } finally {
       setDeleting(false);
     }

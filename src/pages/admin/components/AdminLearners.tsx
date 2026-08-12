@@ -16,7 +16,6 @@ interface LearnerData {
   missed_deadlines: number;
   course_name: string;
   status: "active" | "paused" | "completed" | "pending";
-  is_active: boolean;
 }
 
 interface ToastState {
@@ -39,6 +38,9 @@ export default function AdminLearners() {
   const [pwModal, setPwModal] = useState<{ open: boolean; userId: string; userName: string } | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [pwResetting, setPwResetting] = useState(false);
+
+  const [deleteModal, setDeleteModal] = useState<{ open: boolean; userId: string; userName: string; email: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const showToast = (type: "success" | "error", message: string) => {
     setToast({ visible: true, type, message });
@@ -111,7 +113,6 @@ export default function AdminLearners() {
           missed_deadlines: enr?.missed || 0,
           course_name: enr?.courseName || "-",
           status,
-          is_active: p.is_active !== false,
         };
       });
 
@@ -152,21 +153,32 @@ export default function AdminLearners() {
     }
   };
 
-  const handleToggleActive = async (learnerId: string, currentActive: boolean) => {
+  const handleDeleteAccount = async () => {
+    if (!deleteModal) return;
+    setDeleting(true);
     try {
       const supabase = getSupabase();
-      const { error } = await supabase
-        .from("profiles")
-        .update({ is_active: !currentActive })
-        .eq("id", learnerId);
+      const { data, error: fnError } = await supabase.functions.invoke("admin-delete-learner", {
+        body: { user_id: deleteModal.userId },
+      });
 
-      if (error) throw error;
+      if (fnError) {
+        showToast("error", fnError.message || t("auth.adminDeleteLearnerFailed"));
+        return;
+      }
+      if (data?.error) {
+        showToast("error", data.error);
+        return;
+      }
 
-      showToast("success", currentActive ? t("auth.adminLearnerDeactivated") : t("auth.adminLearnerActivated"));
-      fetchLearners();
+      showToast("success", deleteModal.userName + t("auth.adminDeleteLearnerSuccess"));
+      setDeleteModal(null);
+      await fetchLearners();
     } catch (err) {
-      console.error("Toggle active error:", err);
-      showToast("error", t("auth.adminToggleFailed"));
+      console.error("Delete learner error:", err);
+      showToast("error", err instanceof Error ? err.message : t("auth.adminDeleteLearnerFailed"));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -293,6 +305,70 @@ export default function AdminLearners() {
                     </>
                   ) : (
                     t("auth.adminResetConfirm")
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Account Confirmation Modal */}
+      {deleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-background-50 rounded-2xl w-full max-w-md mx-4 shadow-xl border border-background-200 overflow-hidden">
+            <div className="p-6">
+              <div className="w-12 h-12 flex items-center justify-center rounded-full bg-accent-100 text-accent-700 mx-auto mb-4">
+                <i className="ri-delete-bin-line text-xl"></i>
+              </div>
+              <h3 className="text-lg font-bold text-foreground-950 text-center">
+                {t("auth.adminDeleteLearnerTitle")}
+              </h3>
+              <p className="text-xs text-foreground-500 text-center mt-1">{deleteModal.userName}</p>
+              <p className="text-xs text-foreground-400 text-center">{deleteModal.email}</p>
+              <div className="mt-5 p-4 rounded-xl bg-accent-50 border border-accent-200">
+                <p className="text-sm text-accent-800 font-medium">
+                  {t("auth.adminDeleteLearnerWarning")}
+                </p>
+                <ul className="mt-3 space-y-1.5">
+                  <li className="flex items-start gap-2 text-xs text-accent-700">
+                    <i className="ri-close-circle-line mt-0.5 flex-shrink-0"></i>
+                    {t("auth.adminDeleteLearnerDesc1")}
+                  </li>
+                  <li className="flex items-start gap-2 text-xs text-accent-700">
+                    <i className="ri-close-circle-line mt-0.5 flex-shrink-0"></i>
+                    {t("auth.adminDeleteLearnerDesc2")}
+                  </li>
+                  <li className="flex items-start gap-2 text-xs text-accent-700">
+                    <i className="ri-close-circle-line mt-0.5 flex-shrink-0"></i>
+                    {t("auth.adminDeleteLearnerDesc3")}
+                  </li>
+                  <li className="flex items-start gap-2 text-xs text-accent-700">
+                    <i className="ri-information-line mt-0.5 flex-shrink-0"></i>
+                    {t("auth.adminDeleteLearnerDesc4")}
+                  </li>
+                </ul>
+              </div>
+              <div className="flex items-center gap-3 mt-6">
+                <button
+                  onClick={() => setDeleteModal(null)}
+                  disabled={deleting}
+                  className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium bg-background-100 text-foreground-700 hover:bg-background-200 transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50"
+                >
+                  {t("auth.adminCancel")}
+                </button>
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={deleting}
+                  className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium bg-accent-600 text-background-50 hover:bg-accent-700 transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {deleting ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-background-50/30 border-t-background-50 rounded-full animate-spin"></div>
+                      {t("auth.adminDeleteLearnerDeleting")}
+                    </>
+                  ) : (
+                    t("auth.adminDeleteLearnerConfirm")
                   )}
                 </button>
               </div>
@@ -518,16 +594,19 @@ export default function AdminLearners() {
                         </button>
                       )}
                       <button
-                        onClick={() => handleToggleActive(learner.id, learner.is_active)}
-                        className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
-                          learner.is_active
-                            ? "bg-accent-50 text-accent-600 hover:bg-accent-100 border border-accent-200"
-                            : "bg-accent-50 text-accent-600 hover:bg-accent-100 border border-accent-200"
-                        }`}
-                        title={learner.is_active ? t("auth.adminDeactivateTitle") : t("auth.adminActivateTitle")}
+                        onClick={() =>
+                          setDeleteModal({
+                            open: true,
+                            userId: learner.id,
+                            userName: learner.full_name,
+                            email: learner.email,
+                          })
+                        }
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium bg-accent-50 text-accent-700 hover:bg-accent-100 border border-accent-200 transition-colors cursor-pointer whitespace-nowrap"
+                        title={t("auth.adminDeleteLearnerTitle")}
                       >
-                        <i className={learner.is_active ? "ri-toggle-fill text-base" : "ri-toggle-line text-base"}></i>
-                        {learner.is_active ? t("auth.adminActivate") : t("auth.adminDeactivate")}
+                        <i className="ri-delete-bin-line text-base"></i>
+                        {t("auth.adminDeleteLearner")}
                       </button>
                     </div>
                   </td>

@@ -393,58 +393,58 @@ function DashboardContent() {
       {/* Header */}
       <header className="bg-background-50 border-b border-background-200 sticky top-0 z-40">
         <div className="w-full px-4 md:px-6">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-6">
+          <div className="flex items-center justify-between h-16 gap-3">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
               <button
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                className="md:hidden w-9 h-9 flex items-center justify-center rounded-md text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer"
+                className="md:hidden w-9 h-9 flex items-center justify-center rounded-md text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer flex-shrink-0"
                 aria-label="Toggle menu"
               >
                 <i className={mobileMenuOpen ? "ri-close-line text-lg" : "ri-menu-line text-lg"}></i>
               </button>
-              <Link to="/" className="font-heading text-xl font-bold text-primary-600 cursor-pointer">
+              <Link to="/" className="font-heading text-xl font-bold text-primary-600 cursor-pointer flex-shrink-0 whitespace-nowrap">
                 Better Minds
               </Link>
-              <nav className="hidden md:flex items-center gap-1">
-                <span className="px-3 py-1.5 rounded-md text-sm font-medium text-primary-600 bg-primary-50 whitespace-nowrap">
+              <nav className="hidden md:flex items-center gap-1 min-w-0 flex-1 overflow-x-auto">
+                <span className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium text-primary-600 bg-primary-50 whitespace-nowrap">
                   {t("dashboard.navDashboard")}
                 </span>
                 <Link
                   to="/courses"
-                  className="px-3 py-1.5 rounded-md text-sm font-medium text-foreground-500 hover:text-foreground-700 hover:bg-background-100 transition-colors whitespace-nowrap cursor-pointer"
+                  className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium text-foreground-500 hover:text-foreground-700 hover:bg-background-100 transition-colors whitespace-nowrap cursor-pointer"
                 >
                   <i className="ri-book-open-line mr-1.5"></i>
                   {t("dashboard.navCourses")}
                 </Link>
                 <Link
                   to="/dashboard/book"
-                  className="px-3 py-1.5 rounded-md text-sm font-medium text-foreground-500 hover:text-foreground-700 hover:bg-background-100 transition-colors whitespace-nowrap cursor-pointer"
+                  className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium text-foreground-500 hover:text-foreground-700 hover:bg-background-100 transition-colors whitespace-nowrap cursor-pointer"
                 >
                   <i className="ri-calendar-line mr-1.5"></i>
                   {t("dashboard.book")}
                 </Link>
                 <Link
                   to="/dashboard/history"
-                  className="px-3 py-1.5 rounded-md text-sm font-medium text-foreground-500 hover:text-foreground-700 hover:bg-background-100 transition-colors whitespace-nowrap cursor-pointer"
+                  className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium text-foreground-500 hover:text-foreground-700 hover:bg-background-100 transition-colors whitespace-nowrap cursor-pointer"
                 >
                   <i className="ri-history-line mr-1.5"></i>
                   {t("dashboard.navHistory")}
                 </Link>
                 <Link
                   to="/profile"
-                  className="px-3 py-1.5 rounded-md text-sm font-medium text-foreground-500 hover:text-foreground-700 hover:bg-background-100 transition-colors whitespace-nowrap cursor-pointer"
+                  className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium text-foreground-500 hover:text-foreground-700 hover:bg-background-100 transition-colors whitespace-nowrap cursor-pointer"
                 >
                   {t("dashboard.navProfile")}
                 </Link>
               </nav>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-shrink-0">
               <NotificationBell />
               <div className="hidden sm:flex items-center gap-2 pl-3 border-l border-background-200">
                 <div className="w-8 h-8 flex items-center justify-center rounded-full bg-primary-100 text-primary-700 font-semibold text-sm">
                   {profile?.full_name?.charAt(0)?.toUpperCase() || "U"}
                 </div>
-                <span className="text-sm font-medium text-foreground-700 hidden lg:inline">
+                <span className="text-sm font-medium text-foreground-700 hidden lg:inline truncate max-w-[10rem]">
                   {profile?.full_name}
                 </span>
               </div>

@@ -38,9 +38,23 @@ serve(async (req: Request) => {
       );
     }
 
+    // Skip soft-inactive learner accounts (legacy deactivate) if any remain
+    const learnerIds = [...new Set(enrollments.map((e) => e.learner_id).filter(Boolean))];
+    let inactiveLearnerIds = new Set<string>();
+    if (learnerIds.length > 0) {
+      const { data: inactiveProfiles } = await supabaseClient
+        .from("profiles")
+        .select("id")
+        .in("id", learnerIds)
+        .eq("is_active", false);
+      inactiveLearnerIds = new Set((inactiveProfiles || []).map((p) => p.id));
+    }
+
+    const activeEnrollments = enrollments.filter((e) => !inactiveLearnerIds.has(e.learner_id));
+
     const results: Array<{ learner_id: string; sprint_number: number; enrollment_id: string; recorded: boolean; skipped: string | null }> = [];
 
-    for (const enrollment of enrollments) {
+    for (const enrollment of activeEnrollments) {
       // Get the latest completed sprint
       const { data: completedSprints } = await supabaseClient
         .from("learning_sprints")

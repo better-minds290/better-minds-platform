@@ -67,8 +67,8 @@ function AdminDashboardContent() {
     <div className="min-h-screen bg-background-50">
       <header className="bg-background-50 border-b border-background-200 sticky top-0 z-40">
         <div className="w-full px-4 md:px-6">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-6">
+          <div className="flex items-center justify-between h-16 gap-3">
+            <div className="flex items-center gap-3 min-w-0 flex-shrink-0">
               <button
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
                 className="lg:hidden w-9 h-9 flex items-center justify-center rounded-md text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer"
@@ -76,32 +76,16 @@ function AdminDashboardContent() {
               >
                 <i className={mobileMenuOpen ? "ri-close-line text-lg" : "ri-menu-line text-lg"}></i>
               </button>
-              <Link to="/" className="font-heading text-xl font-bold text-primary-600 cursor-pointer">
+              <Link to="/" className="font-heading text-xl font-bold text-primary-600 cursor-pointer whitespace-nowrap">
                 Better Minds
               </Link>
-              <nav className="hidden lg:flex items-center gap-1">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.key}
-                    onClick={() => handleTabChange(tab.key)}
-                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium whitespace-nowrap cursor-pointer transition-colors ${
-                      activeTab === tab.key
-                        ? "text-primary-600 bg-primary-50"
-                        : "text-foreground-500 hover:text-foreground-700 hover:bg-background-100"
-                    }`}
-                  >
-                    <i className={tab.icon}></i>
-                    {t(tab.labelKey)}
-                  </button>
-                ))}
-              </nav>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-shrink-0">
               <div className="hidden sm:flex items-center gap-2 pl-3 border-l border-background-200">
                 <div className="w-8 h-8 flex items-center justify-center rounded-full bg-primary-100 text-primary-700 font-semibold text-sm">
                   {profile?.full_name?.charAt(0)?.toUpperCase() || "A"}
                 </div>
-                <span className="text-sm font-medium text-foreground-700 hidden xl:inline">
+                <span className="text-sm font-medium text-foreground-700 hidden xl:inline truncate max-w-[10rem]">
                   {profile?.full_name}
                 </span>
               </div>
@@ -114,6 +98,23 @@ function AdminDashboardContent() {
               </button>
             </div>
           </div>
+          {/* Desktop tab bar — second row to avoid horizontal page overflow */}
+          <nav className="hidden lg:flex items-center gap-1 pb-3 overflow-x-auto">
+            {tabs.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => handleTabChange(tab.key)}
+                className={`flex-shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium whitespace-nowrap cursor-pointer transition-colors ${
+                  activeTab === tab.key
+                    ? "text-primary-600 bg-primary-50"
+                    : "text-foreground-500 hover:text-foreground-700 hover:bg-background-100"
+                }`}
+              >
+                <i className={tab.icon}></i>
+                {t(tab.labelKey)}
+              </button>
+            ))}
+          </nav>
           {/* Mobile Menu */}
           {mobileMenuOpen && (
             <div className="lg:hidden border-t border-background-200 bg-background-50 pb-3 pt-2">
@@ -135,7 +136,7 @@ function AdminDashboardContent() {
               </nav>
             </div>
           )}
-          {/* Desktop tab bar — now hidden on lg since we have mobile menu */}
+          {/* Compact horizontal tabs below lg when menu closed */}
           {!mobileMenuOpen && (
             <div className="lg:hidden flex items-center gap-1 pb-3 overflow-x-auto">
               {tabs.map((tab) => (
