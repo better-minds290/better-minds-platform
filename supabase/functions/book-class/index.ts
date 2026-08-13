@@ -21,6 +21,25 @@ function getVnDate(date: Date): number {
   return vnDate.getUTCDate();
 }
 
+/** Weekday of a YYYY-MM-DD slot date in Vietnam (UTC+7). Noon avoids UTC midnight shifting the day. */
+function weekdayFromSlotDate(dateStr: string): number {
+  return new Date(`${dateStr}T12:00:00+07:00`).getUTCDay();
+}
+
+/** Session 2 = Mon–Thu (1–4). Session 3 = Fri–Sun (5, 6, 0). Other session numbers are unchanged. */
+function isSlotAllowedForSession(sessionNumber: number, dateStr: string): boolean {
+  if (sessionNumber !== 2 && sessionNumber !== 3) return true;
+  const dow = weekdayFromSlotDate(dateStr);
+  if (sessionNumber === 2) return dow >= 1 && dow <= 4;
+  return dow === 0 || dow >= 5;
+}
+
+function sessionDayRestrictedError(sessionNumber: number): string {
+  if (sessionNumber === 2) return "Session 2 can only be booked on Monday–Thursday.";
+  if (sessionNumber === 3) return "Session 3 can only be booked on Friday–Sunday.";
+  return "This session cannot be booked on the selected day.";
+}
+
 function createSupabaseClient() {
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -167,7 +186,18 @@ serve(async (req: Request) => {
       );
     }
 
-    debugLog.push("[5] Session available — checking existing schedule");
+    debugLog.push("[5] Session available — checking session weekday rule");
+
+    if (!is_admin && !isSlotAllowedForSession(sessionData.session_number, date)) {
+      debugLog.push(`[5b] Rejected: session ${sessionData.session_number} cannot book date=${date}`);
+      return new Response(
+        JSON.stringify({ error: sessionDayRestrictedError(sessionData.session_number), code: "SESSION_DAY_RESTRICTED", debug: debugLog }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    debugLog.push("[5b] Session weekday check passed" + (is_admin ? " (admin bypass)" : ""));
+    debugLog.push("[5c] Checking existing schedule");
 
     const { data: existingSchedule, error: schedLookupErr } = await supabaseClient
       .from("class_schedules")

@@ -915,7 +915,7 @@ const dashboard = {
   "booking.noStudents": "Chưa có học viên",
   "booking.sessionNum": "Buổi {{num}}",
   "booking.rescheduleTitle": "Đổi Lớp Học",
-  "booking.rescheduleDesc": "Chọn giáo viên và khung giờ mới cho buổi học của bạn. Có thể chọn bất kỳ ngày nào trong tuần.",
+  "booking.rescheduleDesc": "Chọn giáo viên và khung giờ mới. Buổi 2 chỉ Thứ 2–Thứ 5; Buổi 3 chỉ Thứ 6–Chủ nhật.",
   "booking.rescheduleNoSlots": "Không có giáo viên nào khác trống",
   "booking.rescheduleNoSlotsDesc": "Tất cả giáo viên khác đã kín lịch trong tuần này. Hãy thử <strong>chuyển sang tuần khác</strong> hoặc <strong>liên hệ Admin</strong> để được hỗ trợ.",
   "booking.rescheduleLoading": "Đang tải giáo viên thay thế...",
@@ -940,6 +940,8 @@ const dashboard = {
   "booking.noSlotsWeek": "Tuần này chưa có khung giờ nào",
   "booking.cancelTooltip": "Hủy buổi học",
   "booking.viewDetailTooltip": "Xem chi tiết",
+  "booking.session2DayRestricted": "Buổi 2 chỉ được đặt vào Thứ 2–Thứ 5.",
+  "booking.session3DayRestricted": "Buổi 3 chỉ được đặt vào Thứ 6–Chủ nhật.",
 
   // ── FeedbackTab ──
   "feedback.emptyTitle": "Chưa có buổi học nào cần nhận xét",

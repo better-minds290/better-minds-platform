@@ -22,6 +22,25 @@ function getVnDate(date: Date): number {
   return vnDate.getUTCDate();
 }
 
+/** Weekday of a YYYY-MM-DD slot date in Vietnam (UTC+7). Noon avoids UTC midnight shifting the day. */
+function weekdayFromSlotDate(dateStr: string): number {
+  return new Date(`${dateStr}T12:00:00+07:00`).getUTCDay();
+}
+
+/** Session 2 = Mon–Thu (1–4). Session 3 = Fri–Sun (5, 6, 0). Other session numbers are unchanged. */
+function isSlotAllowedForSession(sessionNumber: number, dateStr: string): boolean {
+  if (sessionNumber !== 2 && sessionNumber !== 3) return true;
+  const dow = weekdayFromSlotDate(dateStr);
+  if (sessionNumber === 2) return dow >= 1 && dow <= 4;
+  return dow === 0 || dow >= 5;
+}
+
+function sessionDayRestrictedError(sessionNumber: number): string {
+  if (sessionNumber === 2) return "Session 2 can only be booked on Monday–Thursday.";
+  if (sessionNumber === 3) return "Session 3 can only be booked on Friday–Sunday.";
+  return "This session cannot be booked on the selected day.";
+}
+
 function normalizeTimeHHMM(time: string): string {
   if (!time) return "00:00";
   const parts = String(time).trim().split(":");
@@ -104,6 +123,10 @@ serve(async (req: Request) => {
       const { data: sessionData, error: sessionErr } = await supabaseClient.from("sprint_sessions").select("id, status, session_number, sprint_id, teacher_id, class_id").eq("id", sprint_session_id).maybeSingle();
       if (sessionErr || !sessionData) return new Response(JSON.stringify({ error: "Session not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       if (sessionData.status !== "in_progress" && sessionData.status !== "active") return new Response(JSON.stringify({ error: "Only booked sessions can be rescheduled" }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      if (!isSlotAllowedForSession(sessionData.session_number, new_date)) {
+        return new Response(JSON.stringify({ error: sessionDayRestrictedError(sessionData.session_number), code: "SESSION_DAY_RESTRICTED" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
 
       const normStart = normalizeTimeHHMM(new_start_time);
       const normEnd = normalizeTimeHHMM(new_end_time);

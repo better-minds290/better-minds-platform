@@ -70,6 +70,19 @@ function normalizeTime(time: string): string {
   return time.length > 5 ? time.substring(0, 5) : time;
 }
 
+/** Weekday of a YYYY-MM-DD slot date in Vietnam (UTC+7). Noon avoids UTC midnight shifting the day. */
+function weekdayFromSlotDate(dateStr: string): number {
+  return new Date(`${dateStr}T12:00:00+07:00`).getUTCDay();
+}
+
+/** Session 2 = Mon–Thu (1–4). Session 3 = Fri–Sun (5, 6, 0). Other session numbers are unchanged. */
+function isSlotAllowedForSession(sessionNumber: number, dateStr: string): boolean {
+  if (sessionNumber !== 2 && sessionNumber !== 3) return true;
+  const dow = weekdayFromSlotDate(dateStr);
+  if (sessionNumber === 2) return dow >= 1 && dow <= 4;
+  return dow === 0 || dow >= 5;
+}
+
 function getWeekLabel(weekStart: Date): string {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -128,6 +141,7 @@ function BookingCalendarContent() {
   const [cancelling, setCancelling] = useState(false);
   const [cancelSessionId, setCancelSessionId] = useState<string | null>(null);
   const [classToSessionMap, setClassToSessionMap] = useState<Record<string, string>>();
+  const [classToSessionNumber, setClassToSessionNumber] = useState<Record<string, number>>({});
 
   // Real-time tick to auto-refresh passed classes every 30s
   const [tick, setTick] = useState(0);
@@ -197,12 +211,17 @@ function BookingCalendarContent() {
           // Get class_ids of sessions the learner has already booked
           myBookedClassIds = bookedOnes.map((s: any) => s.class_id).filter(Boolean);
 
-          // Build class_id → sprint_session_id map for cancel/reschedule
+          // Build class_id → sprint_session_id / session_number maps for cancel/reschedule
           const sessionMap: Record<string, string> = {};
+          const numberMap: Record<string, number> = {};
           bookedOnes.forEach((s: any) => {
-            if (s.class_id) sessionMap[s.class_id] = s.id;
+            if (s.class_id) {
+              sessionMap[s.class_id] = s.id;
+              numberMap[s.class_id] = s.session_number;
+            }
           });
           setClassToSessionMap(sessionMap);
+          setClassToSessionNumber(numberMap);
 
           // Also track which classes have completed sessions
           completedClassIds = allSessions.filter((s: any) => s.status === "completed" && s.class_id).map((s: any) => s.class_id);
@@ -214,10 +233,12 @@ function BookingCalendarContent() {
         } else {
           setBookableSessions([]);
           setAllBooked(false);
+          setClassToSessionNumber({});
         }
       } else {
         setBookableSessions([]);
         setAllBooked(false);
+        setClassToSessionNumber({});
       }
 
       const weekEndDate = new Date(weekStart);
@@ -478,6 +499,11 @@ function BookingCalendarContent() {
     if (slot.booked_count >= slot.max_students) return;
     if (bookableSessions.length === 0) return;
     if (!bookingSessionId) return;
+    const sessionNum = bookableSessions.find((s) => s.id === bookingSessionId)?.session_number;
+    if (sessionNum && !isSlotAllowedForSession(sessionNum, slot.date)) {
+      showToast("error", sessionNum === 2 ? t("booking.session2DayRestricted") : t("booking.session3DayRestricted"));
+      return;
+    }
     if (!isTodaySaturday()) {
       showToast("error", t("booking.saturdayOnlyToast"));
       return;
@@ -487,6 +513,11 @@ function BookingCalendarContent() {
 
   const handleConfirmBooking = async () => {
     if (!confirmModal || !profile?.id || !bookingSessionId) return;
+    const sessionNum = bookableSessions.find((s) => s.id === bookingSessionId)?.session_number;
+    if (sessionNum && !isSlotAllowedForSession(sessionNum, confirmModal.date)) {
+      showToast("error", sessionNum === 2 ? t("booking.session2DayRestricted") : t("booking.session3DayRestricted"));
+      return;
+    }
     setBookingInProgress(true);
 
     try {
@@ -771,6 +802,11 @@ function BookingCalendarContent() {
     // Use classToSessionMap to get the correct sprint_session_id for the booked class
     const sessionId = rescheduleTarget?.class_id ? classToSessionMap[rescheduleTarget.class_id] : null;
     if (!rescheduleTarget || !selectedNewSlot || !profile?.id || !sessionId) return;
+    const rescheduleSessionNum = rescheduleTarget.class_id ? classToSessionNumber[rescheduleTarget.class_id] : 0;
+    if (rescheduleSessionNum && !isSlotAllowedForSession(rescheduleSessionNum, selectedNewSlot.date)) {
+      showToast("error", rescheduleSessionNum === 2 ? t("booking.session2DayRestricted") : t("booking.session3DayRestricted"));
+      return;
+    }
     setRescheduleInProgress(true);
 
     try {
@@ -1032,6 +1068,8 @@ function BookingCalendarContent() {
                                     const isMine = slot.is_my_booking;
                                     const isDone = slot.is_completed;
                                     const isPassed = isSlotTimePassed(slot);
+                                    const isDayBlocked = !isMine && !!selectedSessionNum && !isSlotAllowedForSession(Number(selectedSessionNum), slot.date);
+                                    const isUnavailable = isFull || isDayBlocked;
                                     return (
                                       <div key={`${slot.teacher_id}-${slot.availability_id}`} className="relative group/slot">
                                         {/* Hover tooltip */}
@@ -1065,13 +1103,13 @@ function BookingCalendarContent() {
                                               handleSlotClick(slot);
                                             }
                                           }}
-                                          disabled={(!isMine && isFull) || isPast || isDone || isPassed || (!isMine && (bookableSessions.length === 0 || !bookingSessionId))}
+                                          disabled={(!isMine && isUnavailable) || isPast || isDone || isPassed || (!isMine && (bookableSessions.length === 0 || !bookingSessionId))}
                                           className={`w-full text-left p-2 rounded-lg text-xs transition-all duration-150 flex items-center gap-1.5 overflow-hidden ${
                                             isDone
                                               ? "bg-secondary-100 text-secondary-700 cursor-default border border-secondary-200"
                                               : isMine
                                                 ? "bg-primary-100 text-primary-700 cursor-pointer border border-primary-200 hover:bg-primary-200 pr-8"
-                                                : isFull
+                                                : isUnavailable
                                                   ? "bg-foreground-100 text-foreground-600 cursor-not-allowed border border-foreground-200"
                                                   : "bg-accent-50 text-accent-800 cursor-pointer border border-accent-200 hover:bg-accent-100"
                                           }`}
@@ -1080,11 +1118,11 @@ function BookingCalendarContent() {
                                           <div className={`w-2.5 h-6 rounded-full shrink-0 ${
                                             isDone ? "bg-secondary-500" :
                                             isMine ? "bg-primary-500" :
-                                            isFull ? "bg-foreground-500" :
+                                            isUnavailable ? "bg-foreground-500" :
                                             "bg-accent-500"
                                           }`}></div>
                                           <span className="font-semibold truncate flex-1">{slot.teacher_name}</span>
-                                          {isFull && <span className="text-[9px] px-1 py-0.5 rounded bg-foreground-200 text-foreground-700 font-bold shrink-0">{t("booking.fullLabel")}</span>}
+                                          {isFull && !isDayBlocked && <span className="text-[9px] px-1 py-0.5 rounded bg-foreground-200 text-foreground-700 font-bold shrink-0">{t("booking.fullLabel")}</span>}
                                           {isDone ? (
                                             <span className="text-[10px] flex-shrink-0 text-secondary-500">{t("booking.completedLabel")}</span>
                                           ) : isMine ? (
@@ -1092,7 +1130,7 @@ function BookingCalendarContent() {
                                               <i className="ri-user-line text-primary-500"></i>
                                               <i className="ri-arrow-left-right-line text-primary-400"></i>
                                             </span>
-                                          ) : isFull ? (
+                                          ) : isFull && !isDayBlocked ? (
                                             <span className="text-[10px] flex-shrink-0 font-medium">{slot.booked_count}/{slot.max_students}</span>
                                           ) : (
                                             <span className="text-[10px] flex-shrink-0">{formatDuration(slot.duration_minutes)}</span>
@@ -1154,6 +1192,8 @@ function BookingCalendarContent() {
                             const isMine = slot.is_my_booking;
                             const isDone = slot.is_completed;
                             const isPassed = isSlotTimePassed(slot);
+                            const isDayBlocked = !isMine && !!selectedSessionNum && !isSlotAllowedForSession(Number(selectedSessionNum), slot.date);
+                            const isUnavailable = isFull || isDayBlocked;
                             return (
                               <div key={slot.availability_id} className="relative group/slot">
                                 {/* Hover tooltip */}
@@ -1187,13 +1227,13 @@ function BookingCalendarContent() {
                                       handleSlotClick(slot);
                                     }
                                   }}
-                                  disabled={(!isMine && isFull) || isDone || isPassed || (!isMine && (bookableSessions.length === 0 || !bookingSessionId))}
+                                  disabled={(!isMine && isUnavailable) || isDone || isPassed || (!isMine && (bookableSessions.length === 0 || !bookingSessionId))}
                                   className={`w-full flex items-center justify-between p-3 rounded-lg text-sm transition-all overflow-hidden ${
                                     isDone
                                       ? "bg-secondary-100 text-secondary-700 cursor-default border border-secondary-200"
                                       : isMine
                                         ? "bg-primary-100 text-primary-700 cursor-pointer border border-primary-200 hover:bg-primary-200 pr-10"
-                                        : isFull
+                                        : isUnavailable
                                           ? "bg-foreground-100 text-foreground-600 cursor-not-allowed border border-foreground-200"
                                           : "bg-accent-50 text-accent-800 cursor-pointer border border-accent-200 hover:bg-accent-100"
                                   }`}
@@ -1203,7 +1243,7 @@ function BookingCalendarContent() {
                                     <div className={`w-2.5 h-6 rounded-full shrink-0 ${
                                       isDone ? "bg-secondary-500" :
                                       isMine ? "bg-primary-500" :
-                                      isFull ? "bg-foreground-500" :
+                                      isUnavailable ? "bg-foreground-500" :
                                       "bg-accent-500"
                                     }`}></div>
                                     <span className="font-semibold truncate">{slot.teacher_name}</span>
@@ -1212,7 +1252,7 @@ function BookingCalendarContent() {
                                     </span>
                                   </div>
                                   <div className="flex items-center gap-1.5 shrink-0">
-                                    {isFull && <span className="text-[9px] px-1 py-0.5 rounded bg-foreground-200 text-foreground-700 font-bold">{t("booking.fullLabel")}</span>}
+                                    {isFull && !isDayBlocked && <span className="text-[9px] px-1 py-0.5 rounded bg-foreground-200 text-foreground-700 font-bold">{t("booking.fullLabel")}</span>}
                                     {isDone ? (
                                       <span className="text-xs text-secondary-500 flex-shrink-0">{t("booking.completedLabel")}</span>
                                     ) : isMine ? (
@@ -1220,11 +1260,11 @@ function BookingCalendarContent() {
                                         <i className="ri-user-line text-primary-500"></i>
                                         <i className="ri-arrow-left-right-line text-primary-400"></i>
                                       </span>
-                                    ) : isFull ? (
+                                    ) : isFull && !isDayBlocked ? (
                                       <span className="text-xs flex-shrink-0 font-medium">{slot.booked_count}/{slot.max_students}</span>
-                                    ) : (
+                                    ) : !isDayBlocked ? (
                                       <i className="ri-add-circle-line text-accent-500 text-lg flex-shrink-0"></i>
-                                    )}
+                                    ) : null}
                                   </div>
                                 </button>
                                 {isMine && !isDone && (
@@ -1375,16 +1415,19 @@ function BookingCalendarContent() {
                 {rescheduleSlots.map((slot) => {
                   const isFull = slot.booked_count >= slot.max_students;
                   const isSelected = selectedNewSlot?.availability_id === slot.availability_id;
+                  const rescheduleSessionNum = rescheduleTarget.class_id ? classToSessionNumber[rescheduleTarget.class_id] : 0;
+                  const isDayBlocked = !!rescheduleSessionNum && !isSlotAllowedForSession(rescheduleSessionNum, slot.date);
+                  const isUnavailable = isFull || isDayBlocked;
                   return (
                     <button
                       key={slot.availability_id}
                       type="button"
-                      onClick={() => !isFull && setSelectedNewSlot(slot)}
-                      disabled={isFull}
+                      onClick={() => !isUnavailable && setSelectedNewSlot(slot)}
+                      disabled={isUnavailable}
                       className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${
                         isSelected
                           ? "bg-primary-50 border-2 border-primary-400"
-                          : isFull
+                          : isUnavailable
                             ? "bg-background-100 border border-background-200 opacity-50 cursor-not-allowed"
                             : "bg-background-50 border border-background-200 hover:border-primary-300 cursor-pointer"
                       }`}
@@ -1399,8 +1442,8 @@ function BookingCalendarContent() {
                         </p>
                       </div>
                       <div className="flex-shrink-0">
-                        {isFull ? (
-                          <span className="text-xs text-foreground-400">{slot.booked_count}/{slot.max_students}</span>
+                        {isUnavailable ? (
+                          <span className="text-xs text-foreground-400">{isFull ? `${slot.booked_count}/${slot.max_students}` : formatDuration(slot.duration_minutes)}</span>
                         ) : isSelected ? (
                           <i className="ri-checkbox-circle-fill text-primary-500 text-lg"></i>
                         ) : (

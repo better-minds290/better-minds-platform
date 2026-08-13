@@ -827,6 +827,8 @@ const dashboard = {
   "booking.months.oct": "Oct",
   "booking.months.nov": "Nov",
   "booking.months.dec": "Dec",
+  "booking.session2DayRestricted": "Session 2 can only be booked on Monday–Thursday.",
+  "booking.session3DayRestricted": "Session 3 can only be booked on Friday–Sunday.",
 
   // ── Teacher Live Lesson - Rating & Completion ──
   "liveLesson.ratingRateComplete": "Rate & Complete",
