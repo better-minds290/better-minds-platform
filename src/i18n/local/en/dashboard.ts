@@ -736,6 +736,7 @@ const dashboard = {
   "dashboard.contactAdminToReactivate": "Contact Admin to reactivate your account.",
   "dashboard.viewAllCourses": "View All Courses",
 
+  "dashboard.courseCompletedBadge": "Course Completed",
   "dashboard.courseCompletedTitle": "Congratulations! You've Completed the Course!",
   "dashboard.courseCompletedDesc": "{{courseName}} — {{courseLevel}}",
   "dashboard.courseCompletedSessionsNote": "You've conquered all {{sprints}} Sprints with {{sessions}} sessions. What an amazing journey — be proud of yourself!",

@@ -150,7 +150,9 @@ function DashboardContent() {
         return;
       }
 
-      setLearnerStatus(enrollment.status || "active");
+      // Legacy "paused" maps to active; completed stays completed
+      const rawStatus = enrollment.status || "active";
+      setLearnerStatus(rawStatus === "paused" ? "active" : rawStatus);
 
       // Fetch course info separately for reliability
       let courseName: string | null = null;
@@ -559,24 +561,7 @@ function DashboardContent() {
 
         {!loading && !fetchError && data && (
           <>
-            {learnerStatus === "paused" && (
-              <div className="max-w-xl mx-auto text-center py-16">
-                <div className="w-20 h-20 mx-auto flex items-center justify-center rounded-2xl bg-accent-100 text-accent-600 mb-6">
-                  <i className="ri-pause-circle-line text-3xl"></i>
-                </div>
-                <h2 className="font-heading text-2xl font-bold text-foreground-950 mb-3">
-                  {t("dashboard.pausedTitle")}
-                </h2>
-                <p className="text-sm text-foreground-600 mb-4 leading-relaxed max-w-md mx-auto">
-                  {t("dashboard.pausedSimpleDesc")}
-                </p>
-                <p className="text-xs text-foreground-400">
-                  {t("dashboard.contactAdminToReactivate")}
-                </p>
-              </div>
-            )}
-
-            {learnerStatus !== "paused" && isEnrolled && (
+            {isEnrolled && (
               <>
                 {/* My Course Card - always visible when enrolled */}
                 {data.enrollment && (
@@ -655,9 +640,17 @@ function DashboardContent() {
                       </div>
                     </div>
 
+                    <p className="text-xs font-semibold uppercase tracking-wider text-secondary-600 mb-2">
+                      {t("dashboard.courseCompletedBadge")}
+                    </p>
                     <h2 className="font-heading text-2xl md:text-3xl font-bold text-foreground-950 mb-2">
                       {t("dashboard.courseCompletedTitle")}
                     </h2>
+                    {profile?.full_name && (
+                      <p className="text-sm font-medium text-foreground-700 mb-1">
+                        {profile.full_name}
+                      </p>
+                    )}
                     <p className="text-sm text-foreground-500 mb-2 max-w-md mx-auto leading-relaxed">
                       {t("dashboard.courseCompletedDesc", { courseName: data.enrollment?.course_name || t("dashboard.courseFallbackName"), courseLevel: data.enrollment?.course_level || "" })}
                     </p>
@@ -827,7 +820,7 @@ function DashboardContent() {
               </>
             )}
 
-            {learnerStatus !== "paused" && !isEnrolled && (
+            {!isEnrolled && (
               <div className="max-w-2xl mx-auto text-center py-16">
                 <div className="w-20 h-20 mx-auto flex items-center justify-center rounded-2xl bg-primary-100 text-primary-600 mb-6">
                   <i className="ri-compass-3-line text-3xl"></i>

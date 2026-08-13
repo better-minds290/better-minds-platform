@@ -69,6 +69,24 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({ error: "Missing required fields: action, learner_id, sprint_session_id" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // Block completed learners from operational booking/assign/reschedule actions
+    if (action === "reschedule" || action === "admin_assign") {
+      const { data: lifecycleEnrollment } = await supabaseClient
+        .from("enrollments")
+        .select("id, status")
+        .eq("learner_id", learner_id)
+        .order("enrolled_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (lifecycleEnrollment?.status === "completed") {
+        return new Response(
+          JSON.stringify({ error: "Learner course is completed. Scheduling/booking is no longer available.", code: "ENROLLMENT_COMPLETED" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     // ============================
     // ACTION: reschedule
     // ============================

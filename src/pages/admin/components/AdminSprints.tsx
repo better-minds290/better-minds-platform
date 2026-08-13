@@ -40,7 +40,6 @@ function formatDate(dateStr: string | null): string {
 function getStatusColor(status: string): string {
   switch (status) {
     case "active": return "bg-accent-100 text-accent-700";
-    case "paused": return "bg-accent-100 text-accent-700";
     case "completed": return "bg-primary-100 text-primary-700";
     case "expired": return "bg-secondary-100 text-secondary-700";
     case "pending": return "bg-background-200 text-foreground-500";
@@ -186,7 +185,7 @@ export default function AdminSprints() {
           learnerName: profile.full_name,
           learnerEmail: profile.email,
           enrollmentId: enr.id,
-          enrollmentStatus: enr.status || "active",
+          enrollmentStatus: enr.status === "paused" ? "active" : (enr.status || "active"),
           courseName,
           currentSprintId: activeSprint?.id || null,
           sprintNumber: activeSprint?.sprint_number || null,
@@ -326,7 +325,7 @@ export default function AdminSprints() {
     return matchSearch && matchStatus && matchSprintStatus;
   });
 
-  const pausedCount = learners.filter((l) => l.enrollmentStatus === "paused").length;
+  const completedCount = learners.filter((l) => l.enrollmentStatus === "completed").length;
   const expiredCount = learners.filter((l) => l.sprintStatus === "expired").length;
   const activeCount = learners.filter((l) => l.enrollmentStatus === "active").length;
 
@@ -374,8 +373,8 @@ export default function AdminSprints() {
           <p className="font-heading text-2xl font-bold text-secondary-600">{expiredCount}</p>
         </div>
         <div className="p-4 rounded-xl bg-background-50 border border-background-200">
-          <p className="text-xs text-foreground-400 mb-1">{t("auth.adminSprintsPaused")}</p>
-          <p className="font-heading text-2xl font-bold text-accent-600">{pausedCount}</p>
+          <p className="text-xs text-foreground-400 mb-1">{t("auth.adminCompleted")}</p>
+          <p className="font-heading text-2xl font-bold text-primary-600">{completedCount}</p>
         </div>
         <div className="p-4 rounded-xl bg-background-50 border border-background-200">
           <p className="text-xs text-foreground-400 mb-1">Total</p>
@@ -402,8 +401,7 @@ export default function AdminSprints() {
         >
           <option value="all">{t("auth.adminAllStatuses")}</option>
           <option value="active">{t("auth.adminActive")}</option>
-          <option value="paused">{t("auth.adminSprintsPaused")}</option>
-          <option value="completed">Completed</option>
+          <option value="completed">{t("auth.adminCompleted")}</option>
         </select>
         <select
           value={sprintStatusFilter}
@@ -480,7 +478,7 @@ export default function AdminSprints() {
                       className="flex items-center gap-2.5 cursor-pointer group text-left w-full"
                     >
                       <div className={`w-8 h-8 flex items-center justify-center rounded-full font-semibold text-xs flex-shrink-0 ${
-                        l.enrollmentStatus === "paused" ? "bg-accent-100 text-accent-700" : "bg-primary-100 text-primary-700"
+                        l.enrollmentStatus === "completed" ? "bg-secondary-100 text-secondary-700" : "bg-primary-100 text-primary-700"
                       }`}>
                         {l.learnerName.charAt(0).toUpperCase()}
                       </div>
@@ -587,19 +585,6 @@ export default function AdminSprints() {
                             <i className="ri-check-double-line text-sm"></i>
                           </button>
                         </>
-                      )}
-                      {l.enrollmentStatus === "paused" && (
-                        <button
-                          onClick={() => setResetModal({
-                            open: true,
-                            enrollmentId: l.enrollmentId,
-                            learnerName: l.learnerName,
-                          })}
-                          className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-primary-100 text-primary-700 hover:bg-primary-200 transition-colors cursor-pointer"
-                          title={t("auth.adminResetLearner")}
-                        >
-                          <i className="ri-restart-line text-sm"></i>
-                        </button>
                       )}
                     </div>
                   </td>
@@ -803,7 +788,7 @@ export default function AdminSprints() {
             <div className="flex items-center justify-between p-6 border-b border-background-200">
               <div className="flex items-center gap-3">
                 <div className={`w-10 h-10 flex items-center justify-center rounded-xl font-bold text-sm ${
-                  detailModal.enrollmentStatus === "paused" ? "bg-accent-100 text-accent-700" : "bg-primary-100 text-primary-700"
+                  detailModal.enrollmentStatus === "completed" ? "bg-secondary-100 text-secondary-700" : "bg-primary-100 text-primary-700"
                 }`}>
                   {detailModal.learnerName.charAt(0).toUpperCase()}
                 </div>

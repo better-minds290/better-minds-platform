@@ -311,7 +311,7 @@ serve(async (req: Request) => {
             .eq("id", enrollment.course_id)
             .maybeSingle();
 
-          const totalSprints = course?.totalSprints || 24;
+          const totalSprints = course?.total_sprints || 24;
 
           if (sprint.sprint_number >= totalSprints) {
             await supabaseClient

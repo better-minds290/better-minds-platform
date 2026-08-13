@@ -735,6 +735,7 @@ const dashboard = {
   "dashboard.contactAdminToReactivate": "Liên hệ Admin để kích hoạt lại tài khoản.",
   "dashboard.viewAllCourses": "Xem Tất Cả Khóa Học",
 
+  "dashboard.courseCompletedBadge": "Đã Hoàn Thành Khóa Học",
   "dashboard.courseCompletedTitle": "Chúc Mừng! Bạn Đã Hoàn Thành Khóa Học!",
   "dashboard.courseCompletedDesc": "{{courseName}} — {{courseLevel}}",
   "dashboard.courseCompletedSessionsNote": "Bạn đã vượt qua tất cả {{sprints}} Sprint với {{sessions}} buổi học. Một hành trình tuyệt vời — hãy tự hào về bản thân nhé!",

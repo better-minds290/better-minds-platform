@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
 import { Link } from "react-router-dom";
+import { deriveLearnerLifecycle, type LearnerLifecycleStatus } from "@/lib/learnerLifecycle";
 
 interface LearnerData {
   id: string;
@@ -15,7 +16,7 @@ interface LearnerData {
   enrollment_status: string;
   missed_deadlines: number;
   course_name: string;
-  status: "active" | "paused" | "completed" | "pending";
+  status: LearnerLifecycleStatus;
 }
 
 interface ToastState {
@@ -41,6 +42,14 @@ export default function AdminLearners() {
 
   const [deleteModal, setDeleteModal] = useState<{ open: boolean; userId: string; userName: string; email: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  const [completeModal, setCompleteModal] = useState<{
+    open: boolean;
+    enrollmentId: string;
+    learnerName: string;
+    courseName: string;
+  } | null>(null);
+  const [completing, setCompleting] = useState(false);
 
   const showToast = (type: "success" | "error", message: string) => {
     setToast({ visible: true, type, message });
@@ -79,12 +88,19 @@ export default function AdminLearners() {
         studentClass.set(ce.student_id, className);
       });
 
-      // Build enrollment map: learner_id → enrollment info
+      // Prefer an active enrollment over completed when a learner has multiple rows
       const learnerEnrollment = new Map<string, { id: string; status: string; missed: number; courseName: string }>();
       (enrollRes.data || []).forEach((en) => {
+        const existing = learnerEnrollment.get(en.learner_id);
+        const nextStatus = en.status || "";
+        const preferNext =
+          !existing ||
+          (nextStatus === "active" || nextStatus === "paused") ||
+          (existing.status === "completed" && nextStatus !== "completed");
+        if (!preferNext) return;
         learnerEnrollment.set(en.learner_id, {
           id: en.id,
-          status: en.status || "pending",
+          status: nextStatus,
           missed: en.missed_deadlines || 0,
           courseName: courseMap.get(en.course_id) || "-",
         });
@@ -93,12 +109,8 @@ export default function AdminLearners() {
       const merged: LearnerData[] = profilesRes.data.map((p) => {
         const enr = learnerEnrollment.get(p.id);
         const className = studentClass.get(p.id) || "-";
-        const enrollStatus = enr?.status || "pending";
-
-        let status: LearnerData["status"] = "pending";
-        if (enrollStatus === "active") status = "active";
-        else if (enrollStatus === "paused") status = "paused";
-        else if (enrollStatus === "completed") status = "completed";
+        const enrollStatus = enr?.status || "";
+        const status = deriveLearnerLifecycle(enr ? [enrollStatus] : []);
 
         return {
           id: p.id,
@@ -109,7 +121,7 @@ export default function AdminLearners() {
           created_at: p.created_at || "",
           enrolledClass: className,
           enrollment_id: enr?.id || null,
-          enrollment_status: enrollStatus,
+          enrollment_status: enrollStatus || status,
           missed_deadlines: enr?.missed || 0,
           course_name: enr?.courseName || "-",
           status,
@@ -182,6 +194,35 @@ export default function AdminLearners() {
     }
   };
 
+  const handleMarkCompleted = async () => {
+    if (!completeModal) return;
+    setCompleting(true);
+    try {
+      const supabase = getSupabase();
+      const { data, error: fnError } = await supabase.functions.invoke("mark-learner-completed", {
+        body: { enrollment_id: completeModal.enrollmentId },
+      });
+
+      if (fnError) {
+        showToast("error", fnError.message || t("auth.adminMarkCompletedFailed"));
+        return;
+      }
+      if (data?.error) {
+        showToast("error", data.error);
+        return;
+      }
+
+      showToast("success", t("auth.adminMarkCompletedSuccess", { name: completeModal.learnerName }));
+      setCompleteModal(null);
+      await fetchLearners();
+    } catch (err) {
+      console.error("Mark completed error:", err);
+      showToast("error", err instanceof Error ? err.message : t("auth.adminMarkCompletedFailed"));
+    } finally {
+      setCompleting(false);
+    }
+  };
+
   const handleResetPassword = async () => {
     if (!pwModal || !newPassword.trim()) return;
     if (newPassword.length < 8) {
@@ -218,17 +259,21 @@ export default function AdminLearners() {
     return matchSearch && matchStatus;
   });
 
-  const getStatusBadge = (status: LearnerData["status"]) => {
+  const getStatusBadge = (status: LearnerLifecycleStatus) => {
     switch (status) {
       case "active":
         return "bg-accent-100 text-accent-700";
-      case "paused":
-        return "bg-accent-50 text-accent-600 border border-accent-200";
       case "completed":
         return "bg-secondary-100 text-secondary-700";
       default:
         return "bg-background-200 text-foreground-500";
     }
+  };
+
+  const getStatusLabel = (status: LearnerLifecycleStatus) => {
+    if (status === "active") return t("auth.adminActive");
+    if (status === "completed") return t("auth.adminCompleted");
+    return t("auth.adminPending");
   };
 
   const formatDate = (dateStr: string) => {
@@ -305,6 +350,65 @@ export default function AdminLearners() {
                     </>
                   ) : (
                     t("auth.adminResetConfirm")
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mark Completed Confirmation Modal */}
+      {completeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-background-50 rounded-2xl w-full max-w-md mx-4 shadow-xl border border-background-200 overflow-hidden">
+            <div className="p-6">
+              <div className="w-12 h-12 flex items-center justify-center rounded-full bg-secondary-100 text-secondary-700 mx-auto mb-4">
+                <i className="ri-checkbox-circle-line text-xl"></i>
+              </div>
+              <h3 className="text-lg font-bold text-foreground-950 text-center">
+                {t("auth.adminMarkCompletedTitle")}
+              </h3>
+              <p className="text-xs text-foreground-500 text-center mt-1">{completeModal.learnerName}</p>
+              <div className="mt-5 p-4 rounded-xl bg-background-100">
+                <p className="text-sm text-foreground-700">
+                  {t("auth.adminMarkCompletedDesc", { course: completeModal.courseName })}
+                </p>
+                <ul className="mt-3 space-y-1.5">
+                  <li className="flex items-center gap-2 text-xs text-foreground-600">
+                    <i className="ri-check-line text-secondary-600"></i>
+                    {t("auth.adminMarkCompletedKeepHistory")}
+                  </li>
+                  <li className="flex items-center gap-2 text-xs text-foreground-600">
+                    <i className="ri-check-line text-secondary-600"></i>
+                    {t("auth.adminMarkCompletedKeepLogin")}
+                  </li>
+                  <li className="flex items-center gap-2 text-xs text-foreground-600">
+                    <i className="ri-close-line text-accent-600"></i>
+                    {t("auth.adminMarkCompletedStopOps")}
+                  </li>
+                </ul>
+              </div>
+              <div className="flex items-center gap-3 mt-6">
+                <button
+                  onClick={() => setCompleteModal(null)}
+                  disabled={completing}
+                  className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium bg-background-100 text-foreground-700 hover:bg-background-200 transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50"
+                >
+                  {t("auth.adminCancel")}
+                </button>
+                <button
+                  onClick={handleMarkCompleted}
+                  disabled={completing}
+                  className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium bg-secondary-500 text-background-50 hover:bg-secondary-600 transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {completing ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-background-50/30 border-t-background-50 rounded-full animate-spin"></div>
+                      {t("auth.adminMarkCompleting")}
+                    </>
+                  ) : (
+                    t("auth.adminMarkCompletedConfirm")
                   )}
                 </button>
               </div>
@@ -461,10 +565,9 @@ export default function AdminLearners() {
           className="px-4 py-2.5 text-sm bg-background-50 border border-background-200 rounded-lg text-foreground-900 focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20 transition-all duration-200 cursor-pointer"
         >
           <option value="all">{t("auth.adminAllStatuses")}</option>
-          <option value="active">{t("auth.adminActive")}</option>
-          <option value="paused">{t("auth.adminPaused")}</option>
-          <option value="completed">{t("auth.adminCompleted")}</option>
           <option value="pending">{t("auth.adminPending")}</option>
+          <option value="active">{t("auth.adminActive")}</option>
+          <option value="completed">{t("auth.adminCompleted")}</option>
         </select>
       </div>
 
@@ -550,9 +653,7 @@ export default function AdminLearners() {
                     <span
                       className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${getStatusBadge(learner.status)}`}
                     >
-                      {learner.status === "paused"
-                        ? t("auth.adminPaused")
-                        : t(`auth.admin${learner.status.charAt(0).toUpperCase() + learner.status.slice(1)}`)}
+                      {getStatusLabel(learner.status)}
                     </span>
                   </td>
                   <td className="px-5 py-3.5 text-center">
@@ -576,7 +677,23 @@ export default function AdminLearners() {
                       >
                         <i className="ri-key-2-line"></i>
                       </button>
-                      {(learner.status === "paused" || learner.missed_deadlines > 0) && learner.enrollment_id && (
+                      {learner.status === "active" && learner.enrollment_id && (
+                        <button
+                          onClick={() =>
+                            setCompleteModal({
+                              open: true,
+                              enrollmentId: learner.enrollment_id!,
+                              learnerName: learner.full_name,
+                              courseName: learner.course_name,
+                            })
+                          }
+                          className="inline-flex items-center justify-center w-8 h-8 rounded-md text-xs font-medium bg-secondary-50 text-secondary-700 hover:bg-secondary-100 border border-secondary-200 transition-colors cursor-pointer"
+                          title={t("auth.adminMarkCompleted")}
+                        >
+                          <i className="ri-checkbox-circle-line"></i>
+                        </button>
+                      )}
+                      {learner.missed_deadlines > 0 && learner.enrollment_id && learner.status === "active" && (
                         <button
                           onClick={() =>
                             setResetModal({

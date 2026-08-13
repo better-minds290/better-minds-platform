@@ -148,12 +148,14 @@ function BookingCalendarContent() {
     setLoading(true);
 
     try {
-      // Fetch bookable sessions (S2, S3 with status "available")
+      // Only operational enrollments can book (active; legacy paused treated as active)
       const { data: enrollment } = await supabase
         .from("enrollments")
-        .select("id")
+        .select("id, status")
         .eq("learner_id", profile.id)
-        .eq("status", "active")
+        .in("status", ["active", "paused"])
+        .order("enrolled_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       let myBookedClassIds: string[] = [];

@@ -61,10 +61,10 @@ async function notifyAdmins(
 
     if (adminError || !admins || admins.length === 0) return;
 
-    const title = "Learner Auto-Paused";
+    const title = "Learner Missed Deadlines Alert";
     const message =
       learnerName +
-      " has been automatically paused after missing " +
+      " has missed " +
       missedCount +
       " deadline" +
       (missedCount > 1 ? "s" : "") +
@@ -72,13 +72,13 @@ async function notifyAdmins(
       pauseThreshold +
       "). Last missed: Sprint " +
       sprintNumber +
-      ".";
+      ". Enrollment remains active — please follow up.";
 
     const notifications = admins.map((admin) => ({
       user_id: admin.id,
       title,
       message,
-      type: "auto_pause",
+      type: "deadline_alert",
       is_read: false,
       created_at: now,
     }));
@@ -339,27 +339,27 @@ async function processSingleUser(
 
     const currentMissed: number = enrollment.missed_deadlines || 0;
     const newMissedCount = currentMissed + 1;
-    const shouldPause = newMissedCount >= pauseThreshold;
+    const shouldAlertAdmins = newMissedCount >= pauseThreshold;
 
-    const enrollmentUpdate: Record<string, unknown> = { missed_deadlines: newMissedCount };
-    if (shouldPause) enrollmentUpdate.status = "paused";
-
-    await supabaseAdmin.from("enrollments").update(enrollmentUpdate).eq("id", enrollment.id);
+    // Learner lifecycle no longer uses "paused" — keep enrollment active and track misses only
+    await supabaseAdmin
+      .from("enrollments")
+      .update({ missed_deadlines: newMissedCount })
+      .eq("id", enrollment.id);
 
     enrollment.missed_deadlines = newMissedCount;
-    if (shouldPause) enrollment.status = "paused";
 
     const notifTitle = "Sprint " + sprint.sprint_number + " Expired";
-    const notifMsg = shouldPause
-      ? "You missed the deadline for Sprint " + sprint.sprint_number + ". This is your " + newMissedCount + "nd missed sprint — your enrollment has been paused. Contact your admin to reactivate."
-      : "You missed the deadline for Sprint " + sprint.sprint_number + ". Complete the next sprint on time to avoid being paused.";
+    const notifMsg = shouldAlertAdmins
+      ? "You missed the deadline for Sprint " + sprint.sprint_number + ". This is your " + newMissedCount + "th missed sprint. Please catch up with your learning plan — your admin has been notified."
+      : "You missed the deadline for Sprint " + sprint.sprint_number + ". Complete the next sprint on time to stay on track.";
 
     await supabaseAdmin.from("notifications").insert({
       user_id: targetUserId, title: notifTitle, message: notifMsg,
       type: "deadline", is_read: false, created_at: now.toISOString(),
     });
 
-    if (shouldPause) {
+    if (shouldAlertAdmins) {
       await notifyAdmins(
         supabaseAdmin,
         learnerName,
@@ -380,17 +380,19 @@ async function processSingleUser(
         '<div style="padding:24px 0">' +
         '<p style="font-size:15px;color:#333;margin:0 0 8px">Hi ' + learnerName + ',</p>' +
         '<p style="font-size:14px;color:#555;line-height:1.6;margin:0 0 16px">Unfortunately, the deadline for <strong>Sprint ' + sprint.sprint_number + '</strong> has passed without any completed sessions.' +
-        (shouldPause ? ' This was your <strong>' + newMissedCount + 'nd</strong> missed sprint, so your enrollment has been <strong>paused</strong>. Please contact your admin to reactivate.' : ' This is your <strong>' + newMissedCount + 'st</strong> missed sprint. One more will pause your enrollment.') +
+        (shouldAlertAdmins
+          ? ' This is your <strong>' + newMissedCount + 'th</strong> missed sprint. Please coordinate with your admin to get back on track.'
+          : ' This is your <strong>' + newMissedCount + 'st</strong> missed sprint. Stay on schedule for the next one.') +
         '</p><p style="font-size:13px;color:#888;margin:0">— The Better Minds Team</p>' +
         '</div></div>';
 
       await sendEmail(supabaseUrl, supabaseKey, learnerEmail,
-        "Sprint Expired — " + sprint.sprint_number + (shouldPause ? " (Enrollment Paused)" : ""),
+        "Sprint Expired — " + sprint.sprint_number,
         emailHtml
       );
     }
 
-    results.push("Sprint " + sprint.sprint_number + ": expired" + (shouldPause ? " — PAUSED" : "") + " (missed: " + newMissedCount + "/" + pauseThreshold + ")");
+    results.push("Sprint " + sprint.sprint_number + ": expired" + (shouldAlertAdmins ? " — ADMIN ALERT" : "") + " (missed: " + newMissedCount + "/" + pauseThreshold + ")");
   }
 }
 

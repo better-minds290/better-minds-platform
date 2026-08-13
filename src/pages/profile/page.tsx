@@ -416,13 +416,13 @@ function ProfileContent() {
                             Đã đăng ký: {formatDate(enrollmentSettings.enrolledAt)}
                           </span>
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                            enrollmentSettings.status === "active" ? "bg-accent-100 text-accent-700" :
-                            enrollmentSettings.status === "paused" ? "bg-accent-50 text-accent-600" :
-                            "bg-secondary-100 text-secondary-700"
+                            enrollmentSettings.status === "completed"
+                              ? "bg-secondary-100 text-secondary-700"
+                              : "bg-accent-100 text-accent-700"
                           }`}>
-                            {enrollmentSettings.status === "active" ? "Đang học" :
-                             enrollmentSettings.status === "paused" ? "Tạm dừng" :
-                             enrollmentSettings.status === "completed" ? "Đã xong" : enrollmentSettings.status}
+                            {enrollmentSettings.status === "completed"
+                              ? t("profile.statusCompleted")
+                              : t("profile.statusActive")}
                           </span>
                         </div>
                       </div>

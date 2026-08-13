@@ -25,11 +25,12 @@ serve(async (req: Request) => {
     const today = new Date();
     const vnDay = getVnDayOfWeek(today);
 
-    // ── Fetch all active enrollments ──
+    // ── Fetch operational enrollments (active; legacy paused until migrated) ──
+    // Completed enrollments are intentionally excluded.
     const { data: enrollments, error: enrollErr } = await supabaseClient
       .from("enrollments")
       .select("id, learner_id, course_id")
-      .eq("status", "active");
+      .in("status", ["active", "paused"]);
 
     if (enrollErr || !enrollments) {
       return new Response(

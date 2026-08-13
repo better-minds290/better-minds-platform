@@ -92,6 +92,49 @@ serve(async (req: Request) => {
 
     debugLog.push("[3] Saturday window check passed" + (is_admin ? " (admin bypass)" : ""));
 
+    // Learner lifecycle guard: only active (or legacy paused) enrollments may book
+    const { data: learnerEnrollment, error: enrollStatusErr } = await supabaseClient
+      .from("enrollments")
+      .select("id, status")
+      .eq("learner_id", student_id)
+      .order("enrolled_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (enrollStatusErr) {
+      debugLog.push(`[3b-ERR] enrollment lookup failed: ${enrollStatusErr.message}`);
+      return new Response(
+        JSON.stringify({ error: "Failed to verify enrollment status", detail: enrollStatusErr.message, debug: debugLog }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (!learnerEnrollment) {
+      debugLog.push("[3b] No enrollment found — reject booking");
+      return new Response(
+        JSON.stringify({ error: "No active enrollment found. Please enroll in a course first.", code: "NO_ENROLLMENT", debug: debugLog }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (learnerEnrollment.status === "completed") {
+      debugLog.push("[3b] Enrollment completed — reject booking");
+      return new Response(
+        JSON.stringify({ error: "Your course is completed. Booking is no longer available.", code: "ENROLLMENT_COMPLETED", debug: debugLog }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (learnerEnrollment.status !== "active" && learnerEnrollment.status !== "paused") {
+      debugLog.push(`[3b] Enrollment status not bookable: ${learnerEnrollment.status}`);
+      return new Response(
+        JSON.stringify({ error: "Enrollment is not active for booking.", code: "ENROLLMENT_INACTIVE", debug: debugLog }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    debugLog.push(`[3b] Enrollment OK: id=${learnerEnrollment.id}, status=${learnerEnrollment.status}`);
+
     const { data: sessionData, error: sessionErr } = await supabaseClient
       .from("sprint_sessions")
       .select("id, status, session_number, sprint_id")

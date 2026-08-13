@@ -67,12 +67,30 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
   const fetchLearners = useCallback(async () => {
     setLoadingLearners(true);
     try {
-      const { data } = await supabase
-        .from("profiles")
-        .select("id, full_name, email, is_active")
-        .eq("role", "learner")
-        .order("full_name");
-      setLearners((data || []).filter((l: any) => l.is_active !== false));
+      const [{ data: profiles }, { data: enrollments }] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("id, full_name, email, is_active")
+          .eq("role", "learner")
+          .order("full_name"),
+        supabase.from("enrollments").select("learner_id, status"),
+      ]);
+
+      const activeIds = new Set(
+        (enrollments || [])
+          .filter((e: any) => e.status === "active" || e.status === "paused")
+          .map((e: any) => e.learner_id)
+      );
+      const completedOnlyIds = new Set(
+        (enrollments || [])
+          .filter((e: any) => e.status === "completed" && !activeIds.has(e.learner_id))
+          .map((e: any) => e.learner_id)
+      );
+
+      // Pending (no enrollment) + active; exclude completed-only learners from scheduling
+      setLearners(
+        (profiles || []).filter((l: any) => l.is_active !== false && !completedOnlyIds.has(l.id))
+      );
     } catch (err) {
       console.error("Failed to fetch learners:", err);
     } finally {
@@ -101,7 +119,9 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
               .from("enrollments")
               .select("id")
               .eq("learner_id", learner.id)
-              .eq("status", "active")
+              .in("status", ["active", "paused"])
+              .order("enrolled_at", { ascending: false })
+              .limit(1)
               .maybeSingle();
 
             if (!enrollment) return;
@@ -142,7 +162,9 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
         .from("enrollments")
         .select("id")
         .eq("learner_id", learner.id)
-        .eq("status", "active")
+        .in("status", ["active", "paused"])
+        .order("enrolled_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (!enrollment) {
