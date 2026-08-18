@@ -1,163 +1,75 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
-
-interface StudentReport {
-  learner_id: string;
-  learner_name: string;
-  learner_email: string;
-  course_name: string;
-  current_sprint: number;
-  total_sprints: number;
-  completed_sprints: number;
-  avg_rating: number;
-}
-
-interface TeacherReport {
-  teacher_id: string;
-  teacher_name: string;
-  total_sessions: number;
-  completed_sessions: number;
-  avg_rating_given: number;
-  total_feedbacks: number;
-}
+import {
+  fetchStudentReportsForTeacher,
+  fetchTeacherComparisonReports,
+  type StudentReport,
+  type TeacherReport,
+} from "@/lib/teacherReports";
 
 export default function ReportsTab() {
   const { t } = useTranslation();
+  const { profile } = useAuth();
   const supabase = getSupabase();
 
   const [studentReports, setStudentReports] = useState<StudentReport[]>([]);
   const [teacherReports, setTeacherReports] = useState<TeacherReport[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [studentLoading, setStudentLoading] = useState(true);
+  const [teacherLoading, setTeacherLoading] = useState(false);
   const [activeView, setActiveView] = useState<"students" | "teachers">("students");
   const [selectedCourse, setSelectedCourse] = useState<string>("all");
+  const teacherReportsLoadedRef = useRef(false);
 
-  const fetchReports = useCallback(async () => {
-    setLoading(true);
+  const unknownName = t("teacher.unknownName");
+
+  const fetchStudentReports = useCallback(async () => {
+    if (!profile?.id) {
+      setStudentReports([]);
+      setStudentLoading(false);
+      return;
+    }
+
+    setStudentLoading(true);
     try {
-      // Fetch student reports
-      const { data: enrollments, error: enrollErr } = await supabase
-        .from("enrollments")
-        .select("id, learner_id, course_id, status")
-        .eq("status", "active");
-
-      if (!enrollErr && enrollments) {
-        const reports: StudentReport[] = [];
-
-        for (const enrollment of enrollments) {
-          // Get learner profile
-          const { data: learner } = await supabase
-            .from("profiles")
-            .select("full_name, email, is_active")
-            .eq("id", enrollment.learner_id)
-            .maybeSingle();
-
-          // Get course name
-          const { data: course } = await supabase
-            .from("courses")
-            .select("name")
-            .eq("id", enrollment.course_id)
-            .maybeSingle();
-
-          // Get all sprints for this enrollment
-          const { data: sprints } = await supabase
-            .from("learning_sprints")
-            .select("id, sprint_number, status")
-            .eq("enrollment_id", enrollment.id);
-
-          const totalSprints = (sprints || []).length;
-          const completedSprints = (sprints || []).filter((s: any) => s.status === "completed").length;
-
-          // Find current sprint (lowest sprint_number that is not completed)
-          const pendingSprints = (sprints || [])
-            .filter((s: any) => s.status !== "completed")
-            .sort((a: any, b: any) => a.sprint_number - b.sprint_number);
-
-          const currentSprint = pendingSprints.length > 0 ? pendingSprints[0].sprint_number : 0;
-
-          // Get average rating across all sprint sessions
-          let avgRating = 0;
-          let ratingCount = 0;
-          if (sprints) {
-            for (const sprint of sprints) {
-              const { data: sessions } = await supabase
-                .from("sprint_sessions")
-                .select("completion_rating, completed_at")
-                .eq("sprint_id", sprint.id)
-                .not("completion_rating", "is", null);
-
-              (sessions || []).forEach((s: any) => {
-                avgRating += s.completion_rating;
-                ratingCount++;
-              });
-            }
-          }
-
-          const avg = ratingCount > 0 ? Math.round((avgRating / ratingCount) * 10) / 10 : 0;
-
-          reports.push({
-            learner_id: enrollment.learner_id,
-            learner_name: learner?.full_name || t("teacher.unknownName"),
-            learner_email: learner?.email || "",
-            course_name: course?.name || "",
-            current_sprint: currentSprint,
-            total_sprints: totalSprints,
-            completed_sprints: completedSprints,
-            avg_rating: avg,
-          });
-        }
-
-        setStudentReports(reports);
-      }
-
-      // Fetch teacher reports
-      const { data: teachers } = await supabase
-        .from("profiles")
-        .select("id, full_name")
-        .in("role", ["vietnamese_teacher", "foreign_teacher"]);
-
-      if (teachers) {
-        const tReports: TeacherReport[] = [];
-
-        for (const teacher of teachers) {
-          const { data: sessions } = await supabase
-            .from("sprint_sessions")
-            .select("completion_rating, teacher_feedback, status")
-            .eq("teacher_id", teacher.id);
-
-          const completed = (sessions || []).filter((s: any) => s.status === "completed");
-          const withRatings = completed.filter((s: any) => s.completion_rating);
-
-          let avgRating = 0;
-          withRatings.forEach((s: any) => { avgRating += s.completion_rating; });
-
-          const withFeedback = completed.filter((s: any) => s.teacher_feedback);
-
-          tReports.push({
-            teacher_id: teacher.id,
-            teacher_name: teacher.full_name || t("teacher.unknownName"),
-            total_sessions: (sessions || []).length,
-            completed_sessions: completed.length,
-            avg_rating_given: withRatings.length > 0 ? Math.round((avgRating / withRatings.length) * 10) / 10 : 0,
-            total_feedbacks: withFeedback.length,
-          });
-        }
-
-        setTeacherReports(tReports);
-      }
+      const reports = await fetchStudentReportsForTeacher(supabase, profile.id, unknownName);
+      setStudentReports(reports);
     } catch (err) {
       console.error("Reports fetch error:", err);
+      setStudentReports([]);
     } finally {
-      setLoading(false);
+      setStudentLoading(false);
     }
-  }, [supabase]);
+  }, [supabase, profile?.id, unknownName]);
+
+  const fetchTeacherReports = useCallback(async () => {
+    if (teacherReportsLoadedRef.current) return;
+
+    setTeacherLoading(true);
+    try {
+      const reports = await fetchTeacherComparisonReports(supabase, unknownName);
+      setTeacherReports(reports);
+      teacherReportsLoadedRef.current = true;
+    } catch (err) {
+      console.error("Teacher comparison fetch error:", err);
+      setTeacherReports([]);
+    } finally {
+      setTeacherLoading(false);
+    }
+  }, [supabase, unknownName]);
 
   useEffect(() => {
-    fetchReports();
-  }, [fetchReports]);
+    fetchStudentReports();
+  }, [fetchStudentReports]);
 
-  // Derive unique course list + filtered reports
+  useEffect(() => {
+    if (activeView === "teachers") {
+      fetchTeacherReports();
+    }
+  }, [activeView, fetchTeacherReports]);
+
   const courseOptions = useMemo(() => {
     const courses = [...new Set(studentReports.map((r) => r.course_name).filter(Boolean))];
     return courses.sort((a, b) => a.localeCompare(b));
@@ -168,7 +80,7 @@ export default function ReportsTab() {
     return studentReports.filter((r) => r.course_name === selectedCourse);
   }, [studentReports, selectedCourse]);
 
-  if (loading) {
+  if (studentLoading) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="flex flex-col items-center gap-3">
@@ -284,7 +196,7 @@ export default function ReportsTab() {
                   </tr>
                 ) : (
                   filteredReports.map((r) => (
-                    <tr key={r.learner_id} className="hover:bg-background-50/50 transition-colors">
+                    <tr key={`${r.learner_id}-${r.course_name}`} className="hover:bg-background-50/50 transition-colors">
                       <td className="p-3">
                         <p className="font-semibold text-foreground-900">{r.learner_name}</p>
                         <p className="text-xs text-foreground-400">{r.learner_email}</p>
@@ -368,59 +280,68 @@ export default function ReportsTab() {
 
       {/* Teachers Table */}
       {activeView === "teachers" && (
-        <div className="rounded-xl border border-background-200/70 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-background-200/70 bg-background-100/50">
-                  <th className="text-left p-3 text-xs font-semibold text-foreground-500 uppercase">{t("teacher.reportsColTeacher")}</th>
-                  <th className="text-center p-3 text-xs font-semibold text-foreground-500 uppercase">{t("teacher.reportsColTotalSessions")}</th>
-                  <th className="text-center p-3 text-xs font-semibold text-foreground-500 uppercase">{t("teacher.reportsColCompletedSessions")}</th>
-                  <th className="text-center p-3 text-xs font-semibold text-foreground-500 uppercase">{t("teacher.reportsColAvgRatingGiven")}</th>
-                  <th className="text-center p-3 text-xs font-semibold text-foreground-500 uppercase">{t("teacher.reportsColFeedbacks")}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-background-100">
-                {teacherReports.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="p-10 text-center text-sm text-foreground-400">
-                      {t("teacher.reportsNoTeacherData")}
-                    </td>
+        teacherLoading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-8 h-8 border-2 border-primary-300 border-t-primary-600 rounded-full animate-spin"></div>
+              <p className="text-sm text-foreground-400">{t("teacher.reportsLoading")}</p>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-background-200/70 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-background-200/70 bg-background-100/50">
+                    <th className="text-left p-3 text-xs font-semibold text-foreground-500 uppercase">{t("teacher.reportsColTeacher")}</th>
+                    <th className="text-center p-3 text-xs font-semibold text-foreground-500 uppercase">{t("teacher.reportsColTotalSessions")}</th>
+                    <th className="text-center p-3 text-xs font-semibold text-foreground-500 uppercase">{t("teacher.reportsColCompletedSessions")}</th>
+                    <th className="text-center p-3 text-xs font-semibold text-foreground-500 uppercase">{t("teacher.reportsColAvgRatingGiven")}</th>
+                    <th className="text-center p-3 text-xs font-semibold text-foreground-500 uppercase">{t("teacher.reportsColFeedbacks")}</th>
                   </tr>
-                ) : (
-                  teacherReports.map((r) => (
-                    <tr key={r.teacher_id} className="hover:bg-background-50/50 transition-colors">
-                      <td className="p-3">
-                        <p className="font-semibold text-foreground-900">{r.teacher_name}</p>
-                      </td>
-                      <td className="p-3 text-center text-foreground-600">{r.total_sessions}</td>
-                      <td className="p-3 text-center">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-accent-100 text-accent-700">
-                          {r.completed_sessions}/{r.total_sessions}
-                        </span>
-                      </td>
-                      <td className="p-3 text-center">
-                        {r.avg_rating_given > 0 ? (
-                          <span className="inline-flex items-center gap-1 text-foreground-700 font-semibold">
-                            <i className="ri-star-fill text-accent-500 text-xs"></i>
-                            {r.avg_rating_given}/5
-                          </span>
-                        ) : (
-                          <span className="text-foreground-400">—</span>
-                        )}
-                      </td>
-                      <td className="p-3 text-center">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-secondary-100 text-secondary-700">
-                          {r.total_feedbacks}
-                        </span>
+                </thead>
+                <tbody className="divide-y divide-background-100">
+                  {teacherReports.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-10 text-center text-sm text-foreground-400">
+                        {t("teacher.reportsNoTeacherData")}
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    teacherReports.map((r) => (
+                      <tr key={r.teacher_id} className="hover:bg-background-50/50 transition-colors">
+                        <td className="p-3">
+                          <p className="font-semibold text-foreground-900">{r.teacher_name}</p>
+                        </td>
+                        <td className="p-3 text-center text-foreground-600">{r.total_sessions}</td>
+                        <td className="p-3 text-center">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-accent-100 text-accent-700">
+                            {r.completed_sessions}/{r.total_sessions}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          {r.avg_rating_given > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-foreground-700 font-semibold">
+                              <i className="ri-star-fill text-accent-500 text-xs"></i>
+                              {r.avg_rating_given}/5
+                            </span>
+                          ) : (
+                            <span className="text-foreground-400">—</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-secondary-100 text-secondary-700">
+                            {r.total_feedbacks}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        )
       )}
     </div>
   );
