@@ -1,6 +1,13 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import {
+  buildTeachingSessionUnits,
+  fetchTeacherWorkloadSource,
+  formatTeachingHours,
+  summarizeTeacherHours,
+  type TeachingSessionUnit,
+} from "@/lib/teacherHours";
 import TeacherHonorSection from "./TeacherHonorSection";
 
 interface TeacherWorkHour {
@@ -8,9 +15,9 @@ interface TeacherWorkHour {
   teacherName: string;
   teacherEmail: string;
   teacherRole: string;
-  totalHours: number;
-  completedSessions: number;
-  totalSessions: number;
+  taughtSessions: number;
+  teachingHours: number;
+  bookedSessions: number;
 }
 
 interface LearnerSprint {
@@ -46,6 +53,7 @@ const ABSENCE_LIMIT = 5;
 export default function AdminReports() {
   const { t } = useTranslation();
   const [teacherHours, setTeacherHours] = useState<TeacherWorkHour[]>([]);
+  const [teachingUnits, setTeachingUnits] = useState<TeachingSessionUnit[]>([]);
   const [learnerSprints, setLearnerSprints] = useState<LearnerSprint[]>([]);
   const [learnerRatings, setLearnerRatings] = useState<LearnerRating[]>([]);
   const [absenceSummary, setAbsenceSummary] = useState<AbsenceSummaryRow[]>([]);
@@ -98,40 +106,32 @@ export default function AdminReports() {
         learnerMap.set(p.id, { name: p.full_name || "Unknown", email: p.email || "" });
       });
 
-      // ── Fetch all sprint_sessions (completed and total) ──
+      // ── Fetch sprint_sessions for learner ratings (unchanged) ──
       const { data: sessions } = await supabase
         .from("sprint_sessions")
         .select("id, sprint_id, teacher_id, status, completion_rating");
 
       const allSessions = sessions || [];
 
-      // ── Teacher working hours ──
-      const teacherSessionMap = new Map<string, { completed: number; total: number }>();
-      teacherProfiles?.forEach((tp) => {
-        teacherSessionMap.set(tp.id, { completed: 0, total: 0 });
-      });
+      // ── Teacher working hours (unique booked class / class_schedules) ──
+      const workloadSource = await fetchTeacherWorkloadSource(supabase);
+      const units = buildTeachingSessionUnits(workloadSource);
+      const hourStats = summarizeTeacherHours(units);
+      setTeachingUnits(units);
 
-      allSessions.forEach((s) => {
-        if (!s.teacher_id) return;
-        const entry = teacherSessionMap.get(s.teacher_id) || { completed: 0, total: 0 };
-        entry.total++;
-        if (s.status === "completed") entry.completed++;
-        teacherSessionMap.set(s.teacher_id, entry);
+      const teacherHoursList: TeacherWorkHour[] = (teacherProfiles || []).map((tp) => {
+        const profile = teacherMap.get(tp.id) || { name: "Unknown", email: "", role: tp.role };
+        const stats = hourStats.get(tp.id);
+        return {
+          teacherId: tp.id,
+          teacherName: profile.name,
+          teacherEmail: profile.email,
+          teacherRole: profile.role,
+          taughtSessions: stats?.taughtSessions || 0,
+          teachingHours: stats?.teachingHours || 0,
+          bookedSessions: stats?.bookedSessions || 0,
+        };
       });
-
-      const teacherHoursList: TeacherWorkHour[] = Array.from(teacherSessionMap.entries())
-        .map(([teacherId, v]) => {
-          const profile = teacherMap.get(teacherId) || { name: "Unknown", email: "", role: "" };
-          return {
-            teacherId,
-            teacherName: profile.name,
-            teacherEmail: profile.email,
-            teacherRole: profile.role,
-            totalHours: v.completed,
-            completedSessions: v.completed,
-            totalSessions: v.total,
-          };
-        });
 
       setTeacherHours(teacherHoursList);
 
@@ -274,6 +274,17 @@ export default function AdminReports() {
     }
   }, [t]);
 
+  const honorTeachersById = useMemo(
+    () =>
+      new Map(
+        teacherHours.map((teacher) => [
+          teacher.teacherId,
+          { name: teacher.teacherName, email: teacher.teacherEmail, role: teacher.teacherRole },
+        ])
+      ),
+    [teacherHours]
+  );
+
   useEffect(() => {
     fetchReports();
   }, [fetchReports]);
@@ -313,7 +324,7 @@ export default function AdminReports() {
     .sort((a, b) => {
       let cmp = 0;
       if (sortTeacherKey === "name") cmp = a.teacherName.localeCompare(b.teacherName);
-      else if (sortTeacherKey === "hours") cmp = a.totalHours - b.totalHours;
+      else if (sortTeacherKey === "hours") cmp = a.teachingHours - b.teachingHours;
       return sortTeacherDir === "asc" ? cmp : -cmp;
     });
 
@@ -360,7 +371,8 @@ export default function AdminReports() {
     });
 
   // ── Summary stats ──
-  const totalTeacherHours = teacherHours.reduce((sum, t) => sum + t.totalHours, 0);
+  const totalTaughtSessions = teacherHours.reduce((sum, t) => sum + t.taughtSessions, 0);
+  const hourUnit = t("reports.hoursUnit");
   const totalCompletedSprints = learnerSprints.reduce((sum, l) => sum + l.completedSprints, 0);
   const criticalAbsences = absenceSummary.filter((r) => r.absenceCount >= ABSENCE_LIMIT).length;
   const allRatings = learnerRatings.flatMap((l) => (l.avgRating > 0 ? [l.avgRating] : []));
@@ -419,7 +431,12 @@ export default function AdminReports() {
       )}
 
       {/* ═══════════ SECTION 0: Teacher Honor / Vinh Danh ═══════════ */}
-      <TeacherHonorSection />
+      <TeacherHonorSection
+        units={teachingUnits}
+        teachersById={honorTeachersById}
+        onRefresh={fetchReports}
+        hoursUnit={hourUnit}
+      />
 
       {/* ── Summary cards ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -430,7 +447,7 @@ export default function AdminReports() {
             </div>
           </div>
           <p className="text-xs text-foreground-400 mb-0.5">{t("reports.summaryTeacherHours")}</p>
-          <p className="font-heading text-2xl font-bold text-foreground-950">{totalTeacherHours}</p>
+          <p className="font-heading text-2xl font-bold text-foreground-950">{totalTaughtSessions}</p>
           <p className="text-xs text-foreground-400 mt-1">{t("reports.teacherCount", { count: teacherHours.length })}</p>
         </div>
         <div className="p-5 rounded-xl bg-background-50 border border-background-200">
@@ -670,15 +687,15 @@ export default function AdminReports() {
                       </span>
                     </td>
                     <td className="px-5 py-3.5 text-center">
-                      <span className="text-sm font-bold text-primary-600">{teacher.totalHours}</span>
+                      <span className="text-sm font-bold text-primary-600">{teacher.taughtSessions}</span>
                     </td>
                     <td className="px-5 py-3.5 text-center hidden sm:table-cell">
                       <span className="text-sm font-semibold text-foreground-900">
-                        {teacher.completedSessions}
+                        {formatTeachingHours(teacher.teachingHours, hourUnit)}
                       </span>
                     </td>
                     <td className="px-5 py-3.5 text-center hidden sm:table-cell">
-                      <span className="text-sm text-foreground-600">{teacher.totalSessions}</span>
+                      <span className="text-sm text-foreground-600">{teacher.bookedSessions}</span>
                     </td>
                   </tr>
                 ))}

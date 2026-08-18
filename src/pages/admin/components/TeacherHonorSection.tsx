@@ -1,35 +1,32 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { getSupabase } from "@/lib/supabase";
+import {
+  formatTeachingHours,
+  honorDateRangeYmd,
+  summarizeTeacherHours,
+  taughtUnitsInHonorPeriod,
+  type TeachingSessionUnit,
+} from "@/lib/teacherHours";
+
+interface TeacherHonorProfile {
+  name: string;
+  email: string;
+  role: string;
+}
 
 interface TeacherHonor {
   teacherId: string;
   teacherName: string;
   teacherEmail: string;
   teacherRole: string;
-  completedSessions: number;
+  teachingHours: number;
 }
 
-function getDateRange(
-  period: "monthly" | "quarterly" | "yearly",
-  year: number,
-  month: number,
-  quarter: number
-): { start: string; end: string } {
-  if (period === "monthly") {
-    const start = new Date(Date.UTC(year, month - 1, 1));
-    const end = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
-    return { start: start.toISOString(), end: end.toISOString() };
-  }
-  if (period === "quarterly") {
-    const startMonth = (quarter - 1) * 3;
-    const start = new Date(Date.UTC(year, startMonth, 1));
-    const end = new Date(Date.UTC(year, startMonth + 3, 0, 23, 59, 59, 999));
-    return { start: start.toISOString(), end: end.toISOString() };
-  }
-  const start = new Date(Date.UTC(year, 0, 1));
-  const end = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
-  return { start: start.toISOString(), end: end.toISOString() };
+interface TeacherHonorSectionProps {
+  units: TeachingSessionUnit[];
+  teachersById: Map<string, TeacherHonorProfile>;
+  onRefresh: () => void;
+  hoursUnit: string;
 }
 
 const MEDAL_COLORS: Record<number, { border: string; bg: string; badge: string; text: string; icon: string; glow: string }> = {
@@ -44,7 +41,7 @@ function roleLabel(role: string, tf: any) {
   return role;
 }
 
-function PodiumCard({ teacher, rank, height, tr }: { teacher: TeacherHonor; rank: number; height: string; tr: any }) {
+function PodiumCard({ teacher, rank, height, tr, hoursUnit }: { teacher: TeacherHonor; rank: number; height: string; tr: any; hoursUnit: string }) {
   const colors = MEDAL_COLORS[rank] || MEDAL_COLORS[3];
 
   return (
@@ -99,15 +96,15 @@ function PodiumCard({ teacher, rank, height, tr }: { teacher: TeacherHonor; rank
 
         {/* Stats */}
         <div className="text-center">
-          <p className={`text-lg font-bold ${colors.text}`}>{teacher.completedSessions}</p>
-          <p className="text-[10px] text-foreground-400 leading-tight">{tr("honor.sessionsCompleted")}</p>
+          <p className={`text-lg font-bold ${colors.text}`}>{formatTeachingHours(teacher.teachingHours, hoursUnit)}</p>
+          <p className="text-[10px] text-foreground-400 leading-tight">{tr("honor.hoursTaught")}</p>
         </div>
       </div>
     </div>
   );
 }
 
-export default function TeacherHonorSection() {
+export default function TeacherHonorSection({ units, teachersById, onRefresh, hoursUnit }: TeacherHonorSectionProps) {
   const { t } = useTranslation();
   const now = new Date();
   const MONTHS = t("honor.months", { returnObjects: true }) as unknown as string[];
@@ -116,70 +113,31 @@ export default function TeacherHonorSection() {
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   const [selectedQuarter, setSelectedQuarter] = useState(Math.ceil((now.getMonth() + 1) / 3));
-  const [teachers, setTeachers] = useState<TeacherHonor[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showAll, setShowAll] = useState(false);
-  const [error, setError] = useState("");
 
-  const fetchHonorData = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const supabase = getSupabase();
-      const { start, end } = getDateRange(period, selectedYear, selectedMonth, selectedQuarter);
-
-      const { data: teacherProfiles } = await supabase
-        .from("profiles")
-        .select("id, full_name, email, role")
-        .in("role", ["vietnamese_teacher", "foreign_teacher"]);
-
-      const teacherMap = new Map<string, { name: string; email: string; role: string }>();
-      (teacherProfiles || []).forEach((p) =>
-        teacherMap.set(p.id, { name: p.full_name || "Unknown", email: p.email || "", role: p.role })
-      );
-
-      const { data: sessions } = await supabase
-        .from("sprint_sessions")
-        .select("teacher_id")
-        .eq("status", "completed")
-        .gte("completed_at", start)
-        .lte("completed_at", end);
-
-      const countMap = new Map<string, number>();
-      (sessions || []).forEach((s) => {
-        if (!s.teacher_id) return;
-        countMap.set(s.teacher_id, (countMap.get(s.teacher_id) || 0) + 1);
-      });
-
-      const honorList: TeacherHonor[] = Array.from(countMap.entries())
-        .map(([teacherId, count]) => {
-          const profile = teacherMap.get(teacherId) || { name: "Unknown", email: "", role: "" };
-          return {
-            teacherId,
-            teacherName: profile.name,
-            teacherEmail: profile.email,
-            teacherRole: profile.role,
-            completedSessions: count,
-          };
-        })
-        .sort((a, b) => b.completedSessions - a.completedSessions || a.teacherName.localeCompare(b.teacherName));
-
-      setTeachers(honorList);
-    } catch (err) {
-      console.error("Failed to fetch honor data:", err);
-      setError(t("honor.loadError"));
-    } finally {
-      setLoading(false);
-    }
-  }, [period, selectedYear, selectedMonth, selectedQuarter]);
-
-  useEffect(() => {
-    fetchHonorData();
-  }, [fetchHonorData]);
+  const teachers = useMemo(() => {
+    const range = honorDateRangeYmd(period, selectedYear, selectedMonth, selectedQuarter);
+    const periodUnits = taughtUnitsInHonorPeriod(units, range);
+    const stats = summarizeTeacherHours(periodUnits);
+    const honorList: TeacherHonor[] = Array.from(stats.entries())
+      .filter(([, v]) => v.teachingHours > 0 || v.taughtSessions > 0)
+      .map(([teacherId, v]) => {
+        const profile = teachersById.get(teacherId) || { name: "Unknown", email: "", role: "" };
+        return {
+          teacherId,
+          teacherName: profile.name,
+          teacherEmail: profile.email,
+          teacherRole: profile.role,
+          teachingHours: v.teachingHours,
+        };
+      })
+      .sort((a, b) => b.teachingHours - a.teachingHours || a.teacherName.localeCompare(b.teacherName));
+    return honorList;
+  }, [units, teachersById, period, selectedYear, selectedMonth, selectedQuarter]);
 
   const top3 = teachers.slice(0, 3);
   const rest = teachers.slice(3);
-  const totalSessions = teachers.reduce((sum, t) => sum + t.completedSessions, 0);
+  const totalHours = teachers.reduce((sum, teacher) => Math.round((sum + teacher.teachingHours) * 10) / 10, 0);
 
   const periodLabel =
     period === "monthly"
@@ -232,7 +190,7 @@ export default function TeacherHonorSection() {
             </p>
           </div>
           <button
-            onClick={fetchHonorData}
+            onClick={onRefresh}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-background-100 text-foreground-600 hover:bg-background-200 transition-colors whitespace-nowrap cursor-pointer"
           >
             <i className="ri-refresh-line"></i>
@@ -303,32 +261,12 @@ export default function TeacherHonorSection() {
             <strong className="text-foreground-700">{teachers.length}</strong> {t("honor.teacherCount", { count: teachers.length }).replace(/^\d+\s/, "")}
           </span>
           <span>
-            <strong className="text-foreground-700">{totalSessions}</strong> {t("honor.totalSessions", { count: totalSessions }).replace(/^\d+\s/, "")}
+            <strong className="text-foreground-700">{formatTeachingHours(totalHours, hoursUnit)}</strong>
           </span>
         </div>
       </div>
 
-      {/* Error */}
-      {error && (
-        <div className="mb-6 p-3.5 rounded-lg bg-accent-100/80 border border-accent-300/60 text-sm text-accent-800 flex items-center gap-2.5">
-          <i className="ri-error-warning-line text-base flex-shrink-0"></i>
-          <span>{error}</span>
-          <button
-            onClick={fetchHonorData}
-            className="ml-auto text-accent-700 font-medium hover:underline cursor-pointer whitespace-nowrap"
-          >
-            {t("honor.retry")}
-          </button>
-        </div>
-      )}
-
-      {/* Loading */}
-      {loading ? (
-        <div className="text-center py-16">
-          <div className="w-8 h-8 mx-auto border-2 border-secondary-400/30 border-t-secondary-400 rounded-full animate-spin"></div>
-          <p className="mt-4 text-sm text-foreground-400">{t("honor.loading")}</p>
-        </div>
-      ) : teachers.length === 0 ? (
+      {teachers.length === 0 ? (
         <div className="text-center py-16 rounded-xl bg-background-50 border border-background-200">
           <div className="w-12 h-12 mx-auto flex items-center justify-center rounded-full bg-background-200 text-foreground-400 mb-3">
             <i className="ri-emotion-sad-line text-xl"></i>
@@ -341,7 +279,7 @@ export default function TeacherHonorSection() {
           <div className="flex items-end justify-center gap-3 sm:gap-5 mb-8 px-2">
             {/* #2 - Left */}
             {top3.length >= 2 && (
-              <PodiumCard teacher={top3[1]} rank={2} height="pt-6" tr={t} />
+              <PodiumCard teacher={top3[1]} rank={2} height="pt-6" tr={t} hoursUnit={hoursUnit} />
             )}
 
             {/* #1 - Center (tallest) */}
@@ -349,13 +287,13 @@ export default function TeacherHonorSection() {
               <div
                 className="flex flex-col items-center relative animate-[honorGlow_3s_ease-in-out_infinite] rounded-2xl"
               >
-                <PodiumCard teacher={top3[0]} rank={1} height="" tr={t} />
+                <PodiumCard teacher={top3[0]} rank={1} height="" tr={t} hoursUnit={hoursUnit} />
               </div>
             )}
 
             {/* #3 - Right */}
             {top3.length >= 3 && (
-              <PodiumCard teacher={top3[2]} rank={3} height="pt-10" tr={t} />
+              <PodiumCard teacher={top3[2]} rank={3} height="pt-10" tr={t} hoursUnit={hoursUnit} />
             )}
 
             {/* If only 1 teacher, it appears in center already */}
@@ -445,7 +383,7 @@ export default function TeacherHonorSection() {
                             </span>
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <span className="text-sm font-bold text-foreground-900">{teacher.completedSessions}</span>
+                            <span className="text-sm font-bold text-foreground-900">{formatTeachingHours(teacher.teachingHours, hoursUnit)}</span>
                           </td>
                         </tr>
                       ))}
