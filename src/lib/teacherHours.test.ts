@@ -1,9 +1,12 @@
 import {
+  buildBookedAvailabilityKeys,
   buildTeachingSessionUnits,
   durationHoursFromTimes,
+  filterUnbookedAvailabilitySlots,
   formatTeachingHours,
   honorDateRangeYmd,
   summarizeTeacherHours,
+  summarizeWeeklyBookedTeaching,
   taughtUnitsInHonorPeriod,
   type TeacherWorkloadSource,
 } from "./teacherHours";
@@ -315,6 +318,101 @@ assertEqual(formatTeachingHours(1.5, "giờ"), "1.5 giờ", "decimal hours not r
   const stats = summarizeTeacherHours(honor).get("teacher-a")!;
   assertEqual(honor.length, 1, "honor: only August schedule date");
   assertEqual(stats.teachingHours, 1, "honor: rank hours from period only");
+}
+
+// Weekly overview: one schedule + duplicate learner sprint rows → 1 class, 2h
+{
+  const units = buildTeachingSessionUnits(
+    emptySource({
+      schedules: [
+        {
+          id: "week-sch-1",
+          class_id: "week-class-1",
+          teacher_id: "teacher-a",
+          date: "2026-08-17",
+          start_time: "18:00:00",
+          end_time: "20:00:00",
+          status: "scheduled",
+        },
+      ],
+      sessions: [
+        {
+          id: "week-s1",
+          class_id: "week-class-1",
+          teacher_id: "teacher-a",
+          status: "active",
+          session_number: 2,
+          session_type: "vietnamese_teacher",
+        },
+        {
+          id: "week-s2",
+          class_id: "week-class-1",
+          teacher_id: "teacher-a",
+          status: "active",
+          session_number: 2,
+          session_type: "vietnamese_teacher",
+        },
+      ],
+    })
+  );
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const summary = summarizeWeeklyBookedTeaching(units, "teacher-a", week);
+  assertEqual(summary.classCount, 1, "weekly: duplicate learners still one class");
+  assertEqual(summary.totalHours, 2, "weekly: hours from schedule times only");
+}
+
+// Weekly overview: two separate 2-hour schedules → 2 classes, 4h
+{
+  const units = buildTeachingSessionUnits(
+    emptySource({
+      schedules: [
+        {
+          id: "week-a",
+          class_id: "class-a",
+          teacher_id: "teacher-a",
+          date: "2026-08-18",
+          start_time: "18:00:00",
+          end_time: "20:00:00",
+          status: "scheduled",
+        },
+        {
+          id: "week-b",
+          class_id: "class-b",
+          teacher_id: "teacher-a",
+          date: "2026-08-19",
+          start_time: "08:00:00",
+          end_time: "10:00:00",
+          status: "scheduled",
+        },
+      ],
+    })
+  );
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const summary = summarizeWeeklyBookedTeaching(units, "teacher-a", week);
+  assertEqual(summary.classCount, 2, "weekly: two schedules");
+  assertEqual(summary.totalHours, 4, "weekly: four hours total");
+}
+
+// Availability: booked slot hidden, unbooked slot kept
+{
+  const bookedKeys = buildBookedAvailabilityKeys([
+    {
+      teacher_id: "teacher-a",
+      date: "2026-08-18",
+      start_time: "08:00:00",
+      status: "scheduled",
+    },
+  ]);
+  const slots = [
+    { id: "avail-1", date: "2026-08-18", start_time: "08:00:00" },
+    { id: "avail-2", date: "2026-08-18", start_time: "14:00:00" },
+  ];
+  const free = filterUnbookedAvailabilitySlots(slots, "teacher-a", bookedKeys);
+  assertEqual(
+    free.map((s) => s.id),
+    ["avail-2"],
+    "availability: hide booked slot only"
+  );
 }
 
 console.log("teacherHours tests passed");

@@ -269,3 +269,67 @@ export function taughtUnitsInHonorPeriod(
 ): TeachingSessionUnit[] {
   return units.filter((unit) => unit.taught && isDateInRangeYmd(unit.date, range));
 }
+
+/** HH:MM from HH:MM or HH:MM:SS — used to match availability ↔ class_schedules. */
+export function normalizeClockTime(time: string | null): string {
+  if (!time) return "00:00";
+  return time.length > 5 ? time.slice(0, 5) : time;
+}
+
+export function bookedAvailabilitySlotKey(teacherId: string, date: string, startTime: string): string {
+  return `${teacherId}|${date}|${normalizeClockTime(startTime)}`;
+}
+
+/** Keys for availability slots already consumed by a non-cancelled class schedule. */
+export function buildBookedAvailabilityKeys(
+  schedules: Pick<ClassScheduleRow, "teacher_id" | "date" | "start_time" | "status">[]
+): Set<string> {
+  const keys = new Set<string>();
+  schedules.forEach((schedule) => {
+    if (!schedule.teacher_id || !schedule.date || !schedule.start_time) return;
+    if (SKIP_SCHEDULE_STATUSES.has(schedule.status || "")) return;
+    keys.add(bookedAvailabilitySlotKey(schedule.teacher_id, schedule.date, schedule.start_time));
+  });
+  return keys;
+}
+
+export function isAvailabilitySlotBooked(
+  slot: { date: string | null; start_time: string },
+  teacherId: string,
+  bookedKeys: Set<string>
+): boolean {
+  if (!slot.date) return false;
+  return bookedKeys.has(bookedAvailabilitySlotKey(teacherId, slot.date, slot.start_time));
+}
+
+export function filterUnbookedAvailabilitySlots<T extends { date: string | null; start_time: string }>(
+  slots: T[],
+  teacherId: string,
+  bookedKeys: Set<string>
+): T[] {
+  return slots.filter((slot) => !isAvailabilitySlotBooked(slot, teacherId, bookedKeys));
+}
+
+/** Unique booked teaching schedules for one teacher inside a calendar week. */
+export function bookedUnitsInDateRange(
+  units: TeachingSessionUnit[],
+  teacherId: string,
+  range: DateRangeYmd
+): TeachingSessionUnit[] {
+  return units.filter(
+    (unit) => unit.teacherId === teacherId && unit.booked && isDateInRangeYmd(unit.date, range)
+  );
+}
+
+export function summarizeWeeklyBookedTeaching(
+  units: TeachingSessionUnit[],
+  teacherId: string,
+  range: DateRangeYmd
+): { classCount: number; totalHours: number } {
+  const weekUnits = bookedUnitsInDateRange(units, teacherId, range);
+  const totalHours = weekUnits.reduce((sum, unit) => sum + unit.durationHours, 0);
+  return {
+    classCount: weekUnits.length,
+    totalHours: Math.round(totalHours * 10) / 10,
+  };
+}

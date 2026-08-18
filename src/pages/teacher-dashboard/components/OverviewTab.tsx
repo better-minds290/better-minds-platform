@@ -11,6 +11,12 @@ import {
   toLocalDateStr,
   toVietnamDateStr,
 } from "@/lib/datetime";
+import {
+  buildBookedAvailabilityKeys,
+  buildTeachingSessionUnits,
+  filterUnbookedAvailabilitySlots,
+  summarizeWeeklyBookedTeaching,
+} from "@/lib/teacherHours";
 
 interface OverviewTabProps {
   todayStr: string;
@@ -233,6 +239,47 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
     return () => { cancelled = true; };
   }, [profile?.id, weekStartStr, weekEnd]);
 
+  const teachingUnits = useMemo(() => {
+    if (!profile?.id) return [];
+    return buildTeachingSessionUnits({
+      schedules: schedules.map((s) => ({
+        id: s.id,
+        class_id: s.class_id,
+        teacher_id: profile.id,
+        date: s.date,
+        start_time: s.start_time,
+        end_time: s.end_time,
+        status: s.status,
+      })),
+      sessions: sprintSessions.map((s) => ({
+        id: s.id,
+        class_id: s.class_id,
+        teacher_id: s.teacher_id,
+        status: s.status,
+        session_number: s.session_number,
+        session_type: s.session_type,
+      })),
+      classes: classes.map((c) => ({
+        id: c.id,
+        teacher_id: c.teacher_id,
+        duration_minutes: null,
+      })),
+    });
+  }, [schedules, sprintSessions, classes, profile?.id]);
+
+  const bookedAvailabilityKeys = useMemo(
+    () =>
+      buildBookedAvailabilityKeys(
+        schedules.map((s) => ({
+          teacher_id: profile?.id || null,
+          date: s.date,
+          start_time: s.start_time,
+          status: s.status,
+        }))
+      ),
+    [schedules, profile?.id]
+  );
+
   const stats = useMemo(() => {
     const todaySchedules = schedules.filter((s) => s.date === todayStr);
     const upcomingSchedules = schedules.filter(
@@ -268,30 +315,21 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
       (s) => s.date >= weekStartStr && s.date <= weekEnd
     );
 
-    const weekHours = weekSchedules.reduce((acc, s) => {
-      const [sh, sm] = s.start_time.split(":").map(Number);
-      const [eh, em] = s.end_time.split(":").map(Number);
-      return acc + (eh + em / 60) - (sh + sm / 60);
-    }, 0);
-
-    const sprintWeekHours = sprintSessions.filter((s) => {
-      if (!s.scheduled_at) return false;
-      if (s.sprint_status === "locked") return false;
-      const datePart = toVietnamDateStr(s.scheduled_at);
-      return datePart >= weekStartStr && datePart <= weekEnd;
-    }).length * 2;
+    const weeklyTeaching = profile?.id
+      ? summarizeWeeklyBookedTeaching(teachingUnits, profile.id, { start: weekStartStr, end: weekEnd })
+      : { classCount: 0, totalHours: 0 };
 
     return {
       upcomingCount: upcomingSchedules.length + upcomingSprintSessions.length,
       activeStudents: uniqueLearnerIds.size,
-      weekHours: Math.round(weekHours + sprintWeekHours),
-      classesCount: classes.length,
+      weekHours: weeklyTeaching.totalHours,
+      classesCount: weeklyTeaching.classCount,
       todaySchedules,
       todaySprintSessions,
       weekSchedules,
       sprintSessions,
     };
-  }, [todayStr, schedules, classes, sprintSessions, weekStartStr, weekEnd]);
+  }, [todayStr, schedules, sprintSessions, teachingUnits, profile?.id, weekStartStr, weekEnd]);
 
   const formatTimeDisplay = (time: string) => {
     const [h, m] = time.split(":").map(Number);
@@ -317,7 +355,9 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
       const dateStr = toLocalDateStr(d);
       const dow = d.getDay();
       const daySchedules = schedules.filter((s) => s.date === dateStr);
-      const dayAvail = availability?.[dateStr] || [];
+      const dayAvail = profile?.id
+        ? filterUnbookedAvailabilitySlots(availability?.[dateStr] || [], profile.id, bookedAvailabilityKeys)
+        : availability?.[dateStr] || [];
       const daySprintRaw = sprintSessions.filter((s) => {
         if (!s.scheduled_at) return false;
         const datePart = toVietnamDateStr(s.scheduled_at);
@@ -334,7 +374,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
       });
     }
     return days;
-  }, [weekStart, schedules, availability, sprintSessions, t]);
+  }, [weekStart, schedules, availability, sprintSessions, profile?.id, bookedAvailabilityKeys, t]);
 
   const getClassById = (id: string) => classes.find((c) => c.id === id);
 
@@ -345,7 +385,14 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
     return `${displayH}${period}`;
   };
 
-  const totalAvailSlots = Object.values(availability || {}).reduce((sum, slots) => sum + slots.length, 0);
+  const totalAvailSlots = useMemo(() => {
+    if (!availability || !profile?.id) return 0;
+    return Object.values(availability).reduce(
+      (sum, slots) =>
+        sum + filterUnbookedAvailabilitySlots(slots, profile.id, bookedAvailabilityKeys).length,
+      0
+    );
+  }, [availability, profile?.id, bookedAvailabilityKeys]);
 
   if (dataLoading) {
     return (
