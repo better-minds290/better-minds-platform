@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import { buildLearnerRatingAggregates } from "@/lib/learnerReports";
 import {
   buildTeachingSessionUnits,
   fetchTeacherWorkloadSource,
@@ -106,10 +107,15 @@ export default function AdminReports() {
         learnerMap.set(p.id, { name: p.full_name || "Unknown", email: p.email || "" });
       });
 
-      // ── Fetch sprint_sessions for learner ratings (unchanged) ──
-      const { data: sessions } = await supabase
-        .from("sprint_sessions")
-        .select("id, sprint_id, teacher_id, status, completion_rating");
+      // ── Fetch sprint_sessions + session_attendance for learner ratings ──
+      const [{ data: sessions }, { data: attendanceRows }] = await Promise.all([
+        supabase
+          .from("sprint_sessions")
+          .select("id, sprint_id, class_id, session_number, session_type, status, completion_rating"),
+        supabase
+          .from("session_attendance")
+          .select("student_id, class_id, grade, status, teacher_feedback"),
+      ]);
 
       const allSessions = sessions || [];
 
@@ -186,36 +192,24 @@ export default function AdminReports() {
       const sprintIdToEnrollment = new Map<string, string>();
       allSprints.forEach((sp) => sprintIdToEnrollment.set(sp.id, sp.enrollment_id));
 
-      const learnerRatingMap = new Map<string, { ratings: number[] }>();
-      activeLearnerIds.forEach((id) => {
-        learnerRatingMap.set(id, { ratings: [] });
+      const ratingAggregates = buildLearnerRatingAggregates({
+        sessions: allSessions,
+        attendance: attendanceRows || [],
+        sprintIdToEnrollmentId: sprintIdToEnrollment,
+        enrollmentIdToLearnerId: enrollmentLearnerMap,
+        activeLearnerIds,
       });
 
-      allSessions.forEach((s) => {
-        if (typeof s.completion_rating !== "number" || s.completion_rating < 1) return;
-        const enrollmentId = sprintIdToEnrollment.get(s.sprint_id);
-        if (!enrollmentId) return;
-        const learnerId = enrollmentLearnerMap.get(enrollmentId);
-        if (!learnerId || !activeLearnerIds.has(learnerId)) return;
-        const entry = learnerRatingMap.get(learnerId) || { ratings: [] };
-        entry.ratings.push(s.completion_rating);
-        learnerRatingMap.set(learnerId, entry);
+      const learnerRatingsList: LearnerRating[] = ratingAggregates.map((aggregate) => {
+        const profile = learnerMap.get(aggregate.learnerId) || { name: "Unknown", email: "" };
+        return {
+          learnerId: aggregate.learnerId,
+          learnerName: profile.name,
+          learnerEmail: profile.email,
+          avgRating: aggregate.avgRating,
+          totalRated: aggregate.totalRated,
+        };
       });
-
-      const learnerRatingsList: LearnerRating[] = Array.from(learnerRatingMap.entries())
-        .map(([learnerId, v]) => {
-          const profile = learnerMap.get(learnerId) || { name: "Unknown", email: "" };
-          return {
-            learnerId,
-            learnerName: profile.name,
-            learnerEmail: profile.email,
-            avgRating:
-              v.ratings.length > 0
-                ? Math.round((v.ratings.reduce((a, b) => a + b, 0) / v.ratings.length) * 10) / 10
-                : 0,
-            totalRated: v.ratings.length,
-          };
-        });
 
       setLearnerRatings(learnerRatingsList);
 
