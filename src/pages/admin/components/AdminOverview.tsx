@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDate, getVietnamDateParts } from "@/lib/datetime";
 
 interface StatsData {
   totalLearners: number;
@@ -61,8 +62,10 @@ export default function AdminOverview() {
         ? Math.round((teacherIdsWithSessions.size / totalTeachers) * 100)
         : 0;
 
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const vnNow = getVietnamDateParts(new Date());
+      const monthStart = vnNow
+        ? new Date(`${vnNow.year}-${String(vnNow.month).padStart(2, "0")}-01T00:00:00+07:00`).toISOString()
+        : new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
       const newThisMonth = profiles.filter((p) => p.role === "learner" && p.created_at >= monthStart).length;
 
       // Recent learners (last 5 joined)
@@ -173,11 +176,11 @@ export default function AdminOverview() {
                   <p className="text-sm font-medium text-foreground-900 truncate">{learner.full_name}</p>
                   <p className="text-xs text-foreground-500 truncate">
                     {learner.status === "active" ? `${t("auth.adminJoined")}` : `${t("auth.adminStatusLabel")}`}
-                    {new Date(learner.created_at).toLocaleDateString("en-US", {
+                    {formatVietnamDate(learner.created_at, {
                       month: "short",
                       day: "numeric",
                       year: "numeric",
-                    })}
+                    }, "en-US")}
                   </p>
                 </div>
                 {idx === 0 && (

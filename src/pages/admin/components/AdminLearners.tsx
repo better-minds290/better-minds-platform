@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
 import { Link } from "react-router-dom";
 import { deriveLearnerLifecycle, type LearnerLifecycleStatus } from "@/lib/learnerLifecycle";
+import { formatVietnamDate } from "@/lib/datetime";
 
 interface LearnerData {
   id: string;
@@ -278,7 +279,7 @@ export default function AdminLearners() {
 
   const formatDate = (dateStr: string) => {
     if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    return formatVietnamDate(dateStr, { month: "short", day: "numeric", year: "numeric" }, "en-US");
   };
 
   return (

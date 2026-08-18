@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
 import AuthGuard from "@/components/base/AuthGuard";
 import NotificationBell from "@/components/feature/NotificationBell";
+import { formatVietnamDate } from "@/lib/datetime";
 
 interface NotificationItem {
   id: string;
@@ -31,10 +32,10 @@ function getRelativeTime(dateStr: string, t: (key: string, options?: any) => str
   if (diffDays < 1) return t("notifications.hoursAgo", { count: diffHrs });
   if (diffDays < 7) return t("notifications.daysAgo", { count: diffDays });
 
-  return new Date(dateStr).toLocaleDateString("en-US", {
+  return formatVietnamDate(dateStr, {
     month: "short",
     day: "numeric",
-  });
+  }, "en-US");
 }
 
 function getTypeIcon(type: string): string {

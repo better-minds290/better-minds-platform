@@ -336,7 +336,7 @@ serve(async (req: Request) => {
 
       // ── NOTIFICATIONS ──
       const dateDisplay = newSchedule?.date
-        ? new Date(newSchedule.date + "T00:00:00").toLocaleDateString("vi-VN", { month: "short", day: "numeric" })
+        ? new Date(newSchedule.date + "T12:00:00+07:00").toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", month: "short", day: "numeric" })
         : "";
 
       // Notify old teacher

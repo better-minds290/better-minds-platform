@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDate, formatVietnamDateTime } from "@/lib/datetime";
 import AttendanceModal from "./AttendanceModal";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -71,8 +72,7 @@ function formatFileSize(bytes: number): string {
 
 function formatDate(dateStr: string): string {
   if (!dateStr) return "-";
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return formatVietnamDateTime(dateStr, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }, "en-US");
 }
 
 function getFileIcon(fileType: string): string {
@@ -534,7 +534,7 @@ export default function ClassDetailPanel({ classId, className, classSubject }: C
                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-accent-100 text-accent-700 hover:bg-accent-200 transition-colors cursor-pointer whitespace-nowrap"
                   >
                     <i className="ri-clipboard-line text-[10px]"></i>
-                    {new Date(sched.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })} {sched.start_time.slice(0, 5)}
+                    {formatVietnamDate(sched.date, { month: "short", day: "numeric" }, "en-US")} {sched.start_time.slice(0, 5)}
                   </button>
                 ))}
                 {schedules.filter(s => s.status !== "completed").length > 4 && (
@@ -580,7 +580,7 @@ export default function ClassDetailPanel({ classId, className, classSubject }: C
                     )}
                     {enr && (
                       <span className="text-[10px] text-foreground-400 hidden sm:inline">
-                        {new Date(enr.enrolled_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                        {formatVietnamDate(enr.enrolled_at, { month: "short", day: "numeric" }, "en-US")}
                       </span>
                     )}
                   </div>

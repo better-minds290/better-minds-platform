@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
+import { formatVietnamDate } from "@/lib/datetime";
 
 interface EnrollmentCardProps {
   isEnrolled: boolean;
@@ -20,11 +21,11 @@ export default function EnrollmentCard({
 
   const formatDate = (iso: string | null): string => {
     if (!iso) return "—";
-    return new Date(iso).toLocaleDateString("en-US", {
+    return formatVietnamDate(iso, {
       month: "short",
       day: "numeric",
       year: "numeric",
-    });
+    }, "en-US");
   };
 
   return (

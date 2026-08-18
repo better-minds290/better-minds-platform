@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
+import { calendarDiffDays, formatVietnamDate, formatVietnamTime, toVietnamDateStr, vietnamTodayStr } from "@/lib/datetime";
 
 interface LessonData {
   id: string;
@@ -27,21 +28,10 @@ interface ClassMaterial {
 }
 
 function formatDateTime(isoString: string): { date: string; time: string; relative: string } {
-  const date = new Date(isoString);
-  const now = new Date();
-  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  
-  const day = dayNames[date.getDay()];
-  const month = monthNames[date.getMonth()];
-  const dateNum = date.getDate();
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const dateStr = formatVietnamDate(isoString, { weekday: "long", month: "short", day: "numeric" }, "en-US");
+  const timeStr = formatVietnamTime(isoString, { hour: "2-digit", minute: "2-digit", hour12: false }, "en-US");
+  const diffDays = calendarDiffDays(vietnamTodayStr(), toVietnamDateStr(isoString));
 
-  const dateStr = `${day}, ${month} ${dateNum}`;
-  const timeStr = `${hours}:${minutes}`;
-
-  const diffDays = Math.ceil((date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
   let relative = "";
   if (diffDays === 0) relative = "Today";
   else if (diffDays === 1) relative = "Tomorrow";

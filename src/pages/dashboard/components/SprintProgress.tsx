@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { useRef, useEffect, useState, useCallback } from "react";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDateTime } from "@/lib/datetime";
 
 interface SessionData {
   id: string;
@@ -62,15 +63,14 @@ function getSessionColor(sessionType: string, status: string): string {
 
 function formatSchedule(scheduledAt: string | null): string {
   if (!scheduledAt) return "";
-  const date = new Date(scheduledAt);
-  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const day = dayNames[date.getDay()];
-  const month = monthNames[date.getMonth()];
-  const dateNum = date.getDate();
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${day}, ${month} ${dateNum} · ${hours}:${minutes}`;
+  return formatVietnamDateTime(scheduledAt, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }, "en-US");
 }
 
 export default function SprintProgress({ sprintId, sprintNumber, status, sessions, courseId, onStartSprint, isStarting }: SprintProgressProps) {

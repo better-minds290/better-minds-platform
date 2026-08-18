@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDate } from "@/lib/datetime";
 
 interface AttendanceModalProps {
   scheduleId: string;
@@ -157,8 +158,7 @@ export default function AttendanceModal({
   };
 
   const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", year: "numeric" });
+    return formatVietnamDate(dateStr, { weekday: "long", month: "short", day: "numeric", year: "numeric" }, "en-US");
   };
 
   const statusCount = Object.values(attendanceMap).reduce(

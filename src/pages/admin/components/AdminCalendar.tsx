@@ -1,6 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import {
+  calendarDateToLocalDate,
+  formatVietnamSlotDate,
+  getMondayOfWeek,
+  toLocalDateStr,
+  vietnamTodayStr,
+} from "@/lib/datetime";
 
 interface CalendarSlot {
   slot_type: "booked" | "available" | "unavailable";
@@ -31,25 +38,9 @@ interface CellData {
   unavailableCount: number;
 }
 
-function getMondayOfWeek(date: Date): Date {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function toLocalDateStr(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
 function formatDateDisplay(dateStr: string): string {
   if (!dateStr) return "";
-  const d = new Date(dateStr + "T00:00:00");
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  return `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}`;
+  return formatVietnamSlotDate(dateStr);
 }
 
 function formatTime12h(time: string): string {
@@ -67,9 +58,7 @@ function formatDuration(mins: number): string {
 }
 
 function getWeekLabel(weekStart: Date): string {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const currentMonday = getMondayOfWeek(today);
+  const currentMonday = getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr()));
   const diffWeeks = Math.round((weekStart.getTime() - currentMonday.getTime()) / (7 * 24 * 60 * 60 * 1000));
   const end = new Date(weekStart);
   end.setDate(end.getDate() + 6);
@@ -91,7 +80,7 @@ function getWeekLabel(weekStart: Date): string {
 export default function AdminCalendar() {
   const { t } = useTranslation();
   const supabase = getSupabase();
-  const [weekStart, setWeekStart] = useState(() => getMondayOfWeek(new Date()));
+  const [weekStart, setWeekStart] = useState(() => getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr())));
   const [openTooltipKey, setOpenTooltipKey] = useState<string | null>(null);
   const [slots, setSlots] = useState<CalendarSlot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -436,14 +425,11 @@ export default function AdminCalendar() {
   const weekLabel = useMemo(() => getWeekLabel(weekStart), [weekStart]);
 
   const isCurrentWeek = useMemo(() => {
-    const currentMonday = getMondayOfWeek(new Date());
+    const currentMonday = getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr()));
     return weekStart.getTime() === currentMonday.getTime();
   }, [weekStart]);
 
-  const isToday = (date: Date) => {
-    const today = new Date();
-    return date.toDateString() === today.toDateString();
-  };
+  const isToday = (date: Date) => toLocalDateStr(date) === vietnamTodayStr();
 
   const handlePrevWeek = () => {
     const prev = new Date(weekStart);
@@ -591,7 +577,7 @@ export default function AdminCalendar() {
             </button>
             <button
               type="button"
-              onClick={() => setWeekStart(getMondayOfWeek(new Date()))}
+              onClick={() => setWeekStart(getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr())))}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
                 isCurrentWeek
                   ? "bg-primary-100 text-primary-700 hover:bg-primary-200"

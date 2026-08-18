@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDateTime, toVietnamDateStr } from "@/lib/datetime";
 import { Link } from "react-router-dom";
 
 interface SprintSession {
@@ -37,9 +38,7 @@ interface SprintSession {
 function groupSessionsByClass(sessions: SprintSession[]): SprintSession[][] {
   const groups = new Map<string, SprintSession[]>();
   sessions.forEach((s) => {
-    const datePart = s.scheduled_at
-      ? (s.scheduled_at.includes("T") ? s.scheduled_at.split("T")[0] : s.scheduled_at.split(" ")[0])
-      : "no-date";
+    const datePart = s.scheduled_at ? toVietnamDateStr(s.scheduled_at) || "no-date" : "no-date";
     const key = `${s.class_id || `sprint-${s.sprint_id}`}_${s.session_number}_${s.session_type}_${datePart}_${s.sprint_number}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(s);
@@ -344,13 +343,13 @@ export default function SprintSessionsTab() {
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("vi-VN", {
+    return formatVietnamDateTime(dateStr, {
       weekday: "short",
       month: "short",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    });
+    }, "vi-VN");
   };
 
   function parseLessonSummary(

@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import LearnerLiveLesson from "./components/LearnerLiveLesson";
 import TeacherLiveLesson from "./components/TeacherLiveLesson";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDateTime } from "@/lib/datetime";
 
 interface SessionData {
   id: string;
@@ -491,14 +492,14 @@ function SessionDetailContent() {
                     <p className="text-base text-foreground-700 flex items-center gap-2">
                       <i className="ri-calendar-line text-foreground-400 w-5 h-5 flex items-center justify-center"></i>
                       <span className="font-medium">
-                        {new Date(session.scheduled_at).toLocaleString("vi-VN", {
+                        {formatVietnamDateTime(session.scheduled_at, {
                           weekday: "long",
                           year: "numeric",
                           month: "long",
                           day: "numeric",
                           hour: "2-digit",
                           minute: "2-digit",
-                        })}
+                        }, "vi-VN")}
                       </span>
                     </p>
                   )}

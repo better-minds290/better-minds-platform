@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { formatVietnamDateTime } from "@/lib/datetime";
 
 interface RecapSession {
   id: string;
@@ -31,15 +32,14 @@ interface SessionRecapCardProps {
 
 function formatDateTime(isoString: string | null): string {
   if (!isoString) return "";
-  const date = new Date(isoString);
-  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const day = dayNames[date.getDay()];
-  const month = monthNames[date.getMonth()];
-  const dateNum = date.getDate();
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${day}, ${month} ${dateNum} · ${hours}:${minutes}`;
+  return formatVietnamDateTime(isoString, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }, "en-US");
 }
 
 function getSessionTypeIcon(type: string): string {

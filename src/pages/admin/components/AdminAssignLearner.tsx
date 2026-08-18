@@ -1,6 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import {
+  calendarDateToLocalDate,
+  formatVietnamDateTime,
+  formatVietnamSlotDate,
+  getMondayOfWeek,
+  toLocalDateStr,
+  vietnamTodayStr,
+} from "@/lib/datetime";
 
 interface Learner {
   id: string;
@@ -27,10 +35,7 @@ interface AdminAssignLearnerProps {
 
 function formatDateDisplay(dateStr: string): string {
   if (!dateStr) return "";
-  const d = new Date(dateStr + "T00:00:00");
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  return `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}`;
+  return formatVietnamSlotDate(dateStr);
 }
 
 function formatTime12h(time: string): string {
@@ -204,19 +209,13 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
     const effectiveOffset = explicitOffset !== undefined ? explicitOffset : weekOffset;
 
     try {
-      // Get exactly 1 week of teacher availability based on effectiveOffset
-      const today = new Date();
-      const monday = new Date(today);
-      const day = monday.getDay();
-      const diff = monday.getDate() - day + (day === 0 ? -6 : 1);
-      monday.setDate(diff);
-      monday.setHours(0, 0, 0, 0);
+      const monday = getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr()));
       monday.setDate(monday.getDate() + effectiveOffset * 7);
 
       const endDate = new Date(monday);
       endDate.setDate(endDate.getDate() + 6);
-      const startStr = monday.toISOString().split("T")[0];
-      const endStr = endDate.toISOString().split("T")[0];
+      const startStr = toLocalDateStr(monday);
+      const endStr = toLocalDateStr(endDate);
 
       const { data: availData } = await supabase
         .from("teacher_availability")
@@ -630,7 +629,7 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
                     </div>
                     <p className="text-xs text-foreground-400 mt-0.5">
                       {t("auth.adminAssignSprint")} {(s.sprint as any)?.sprint_number || "?"}
-                      {s.scheduled_at && ` · ${new Date(s.scheduled_at).toLocaleString("vi-VN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`}
+                      {s.scheduled_at && ` · ${formatVietnamDateTime(s.scheduled_at, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }, "vi-VN")}`}
                     </p>
                   </button>
                 );

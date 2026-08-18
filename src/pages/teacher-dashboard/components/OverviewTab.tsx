@@ -3,6 +3,14 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
 import { Link } from "react-router-dom";
+import {
+  calendarDateToLocalDate,
+  formatVietnamDate,
+  formatVietnamTime,
+  getMondayOfWeek,
+  toLocalDateStr,
+  toVietnamDateStr,
+} from "@/lib/datetime";
 
 interface OverviewTabProps {
   todayStr: string;
@@ -57,21 +65,12 @@ interface SprintSession {
   class_id: string | null;
 }
 
-function toLocalDateStr(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 function groupSprintSessions<T extends { class_id: string | null; session_number: number; session_type: string; scheduled_at: string | null; sprint_number: number; sprint_id: string; id: string }>(
   sessions: T[]
 ): T[][] {
   const groups = new Map<string, T[]>();
   sessions.forEach((s) => {
-    const datePart = s.scheduled_at
-      ? (s.scheduled_at.includes("T") ? s.scheduled_at.split("T")[0] : s.scheduled_at.split(" ")[0])
-      : "no-date";
+    const datePart = s.scheduled_at ? toVietnamDateStr(s.scheduled_at) || "no-date" : "no-date";
     const key = `${s.class_id || `sprint-${s.sprint_id}`}_${s.session_number}_${s.session_type}_${datePart}_${s.sprint_number}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(s);
@@ -90,14 +89,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
   const [dataLoading, setDataLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
 
-  const weekStart = (() => {
-    const d = new Date(todayStr);
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-    d.setDate(diff);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  })();
+  const weekStart = getMondayOfWeek(calendarDateToLocalDate(todayStr));
   const weekEnd = (() => {
     const d = new Date(weekStart);
     d.setDate(d.getDate() + 6);
@@ -250,9 +242,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
     const todaySprintSessionsRaw = sprintSessions.filter((s) => {
       if (!s.scheduled_at) return false;
       if (s.sprint_status === "locked") return false;
-      const datePart = s.scheduled_at.includes("T")
-        ? s.scheduled_at.split("T")[0]
-        : s.scheduled_at.split(" ")[0];
+      const datePart = toVietnamDateStr(s.scheduled_at);
       return datePart === todayStr;
     });
     const todaySprintSessions = groupSprintSessions(todaySprintSessionsRaw);
@@ -267,9 +257,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
     );
     const dedupedUpcomingSprintSessionsRaw = upcomingSprintSessionsRaw.filter((s) => {
       if (!s.class_id || !s.scheduled_at) return true;
-      const datePart = s.scheduled_at.includes("T")
-        ? s.scheduled_at.split("T")[0]
-        : s.scheduled_at.split(" ")[0];
+      const datePart = toVietnamDateStr(s.scheduled_at);
       return !classScheduleKeys.has(`${s.class_id}|${datePart}`);
     });
     const upcomingSprintSessions = groupSprintSessions(dedupedUpcomingSprintSessionsRaw);
@@ -289,9 +277,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
     const sprintWeekHours = sprintSessions.filter((s) => {
       if (!s.scheduled_at) return false;
       if (s.sprint_status === "locked") return false;
-      const datePart = s.scheduled_at.includes("T")
-        ? s.scheduled_at.split("T")[0]
-        : s.scheduled_at.split(" ")[0];
+      const datePart = toVietnamDateStr(s.scheduled_at);
       return datePart >= weekStartStr && datePart <= weekEnd;
     }).length * 2;
 
@@ -334,9 +320,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
       const dayAvail = availability?.[dateStr] || [];
       const daySprintRaw = sprintSessions.filter((s) => {
         if (!s.scheduled_at) return false;
-        const datePart = s.scheduled_at.includes("T")
-          ? s.scheduled_at.split("T")[0]
-          : s.scheduled_at.split(" ")[0];
+        const datePart = toVietnamDateStr(s.scheduled_at);
         return datePart === dateStr && s.sprint_status !== "locked" && s.status !== "locked";
       });
       const daySprint = groupSprintSessions(daySprintRaw);
@@ -513,7 +497,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
                   <div className="text-right shrink-0">
                     {session.scheduled_at ? (
                       <p className="text-sm font-medium text-foreground-900">
-                        {new Date(session.scheduled_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
+                        {formatVietnamTime(session.scheduled_at, { hour: "2-digit", minute: "2-digit" }, "vi-VN")}
                       </p>
                     ) : (
                       <p className="text-sm text-foreground-400">-:--</p>
@@ -544,7 +528,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
       <div>
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-heading text-lg font-bold text-foreground-950">
-            {t("teacher.calendarWeek")} {weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+            {t("teacher.calendarWeek")} {formatVietnamDate(toLocalDateStr(weekStart), { month: "short", day: "numeric" }, "en-US")}
           </h3>
           {!availLoading && totalAvailSlots > 0 && (
             <div className="flex items-center gap-4 text-xs">
@@ -613,7 +597,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
                     const s = group[0];
                     const count = group.length;
                     const timeStr = s.scheduled_at
-                      ? new Date(s.scheduled_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })
+                      ? formatVietnamTime(s.scheduled_at, { hour: "2-digit", minute: "2-digit" }, "vi-VN")
                       : "";
                     const statusBadge = s.status === "completed"
                       ? "bg-accent-100/80 border-accent-200/70 text-accent-700"
@@ -702,7 +686,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
                       <i className="ri-time-line text-[9px]"></i>
                       {t("teacher.overviewPendingGrade")}
                     </span>
-                    {session.scheduled_at ? new Date(session.scheduled_at).toLocaleDateString("vi-VN", { weekday: "short", month: "short", day: "numeric" }) : "-"}
+                    {session.scheduled_at ? formatVietnamDate(session.scheduled_at, { weekday: "short", month: "short", day: "numeric" }, "vi-VN") : "-"}
                   </div>
                   <i className="ri-arrow-right-line text-foreground-300 opacity-0 group-hover:opacity-100 transition-opacity"></i>
                 </Link>
@@ -751,7 +735,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
                     </p>
                   </div>
                   <div className="text-right shrink-0 text-xs text-foreground-500">
-                    {session.scheduled_at ? new Date(session.scheduled_at).toLocaleDateString("vi-VN", { weekday: "short", month: "short", day: "numeric" }) : "-"}
+                    {session.scheduled_at ? formatVietnamDate(session.scheduled_at, { weekday: "short", month: "short", day: "numeric" }, "vi-VN") : "-"}
                   </div>
                   <i className="ri-arrow-right-line text-foreground-300 opacity-0 group-hover:opacity-100 transition-opacity"></i>
                 </Link>

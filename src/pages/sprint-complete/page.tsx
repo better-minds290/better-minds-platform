@@ -6,6 +6,7 @@ import NotificationBell from "@/components/feature/NotificationBell";
 import CelebrationHero from "./components/CelebrationHero";
 import SessionRecapCard from "./components/SessionRecapCard";
 import { getSupabase } from "@/lib/supabase";
+import { addCalendarDays, formatVietnamDate, vietnamTodayStr, getVietnamDateParts } from "@/lib/datetime";
 
 interface RecapSession {
   id: string;
@@ -226,17 +227,16 @@ function SprintCompleteContent() {
 
   const nextSprintNumber = sprint.sprint_number + 1;
 
-  // Calculate days until next Saturday (Vietnam timezone)
-  const now = new Date();
-  const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000);
-  const currentDay = vnNow.getUTCDay(); // 0=Sun, 6=Sat
+  const vnParts = getVietnamDateParts(new Date());
+  const currentDay = vnParts?.weekday ?? 0;
   let daysUntilSaturday = (6 - currentDay + 7) % 7;
-  if (daysUntilSaturday === 0) daysUntilSaturday = 7; // Today is Saturday → next Saturday is 7 days
+  if (daysUntilSaturday === 0) daysUntilSaturday = 7;
 
-  // Compute next Saturday date for display
-  const nextSaturday = new Date(now);
-  nextSaturday.setDate(now.getDate() + daysUntilSaturday);
-  const nextSaturdayStr = nextSaturday.toLocaleDateString("vi-VN", { day: "numeric", month: "numeric", year: "numeric" });
+  const nextSaturdayStr = formatVietnamDate(
+    addCalendarDays(vietnamTodayStr(), daysUntilSaturday),
+    { day: "numeric", month: "numeric", year: "numeric" },
+    "vi-VN"
+  );
 
   const isLastSprint = sprint.sprint_number >= sprint.course.total_sprints;
 

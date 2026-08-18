@@ -5,6 +5,14 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
 import NotificationBell from "@/components/feature/NotificationBell";
+import {
+  addCalendarDays,
+  calendarDateToLocalDate,
+  formatVietnamSlotDate,
+  getMondayOfWeek,
+  toLocalDateStr,
+  vietnamTodayStr,
+} from "@/lib/datetime";
 
 interface TeacherSlot {
   availability_id: string;
@@ -30,25 +38,9 @@ interface BookableSession {
   status: string;
 }
 
-function getMondayOfWeek(date: Date): Date {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function toLocalDateStr(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
 function formatDateDisplay(dateStr: string): string {
   if (!dateStr) return "";
-  const d = new Date(dateStr + "T00:00:00");
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  return `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}`;
+  return formatVietnamSlotDate(dateStr);
 }
 
 function formatTime12h(time: string): string {
@@ -84,9 +76,7 @@ function isSlotAllowedForSession(sessionNumber: number, dateStr: string): boolea
 }
 
 function getWeekLabel(weekStart: Date): string {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const currentMonday = getMondayOfWeek(today);
+  const currentMonday = getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr()));
 
   const diffWeeks = Math.round((weekStart.getTime() - currentMonday.getTime()) / (7 * 24 * 60 * 60 * 1000));
 
@@ -113,11 +103,8 @@ function BookingCalendarContent() {
   const supabase = getSupabase();
 
   const [weekStart, setWeekStart] = useState(() => {
-    const now = new Date();
-    // Default to next week so learners see bookable slots immediately
-    const nextWeek = new Date(now);
-    nextWeek.setDate(nextWeek.getDate() + 7);
-    return getMondayOfWeek(nextWeek);
+    const nextWeekDate = addCalendarDays(vietnamTodayStr(), 7);
+    return getMondayOfWeek(calendarDateToLocalDate(nextWeekDate));
   });
 
   const [slots, setSlots] = useState<TeacherSlot[]>([]);
@@ -472,14 +459,11 @@ function BookingCalendarContent() {
   const weekLabel = useMemo(() => getWeekLabel(weekStart), [weekStart]);
 
   const isCurrentWeek = useMemo(() => {
-    const currentMonday = getMondayOfWeek(new Date());
+    const currentMonday = getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr()));
     return weekStart.getTime() === currentMonday.getTime();
   }, [weekStart]);
 
-  const isToday = (date: Date) => {
-    const today = new Date();
-    return date.toDateString() === today.toDateString();
-  };
+  const isToday = (date: Date) => toLocalDateStr(date) === vietnamTodayStr();
 
   const handlePrevWeek = () => {
     const prev = new Date(weekStart);
@@ -911,7 +895,7 @@ function BookingCalendarContent() {
             </button>
             <button
               type="button"
-              onClick={() => setWeekStart(getMondayOfWeek(new Date()))}
+              onClick={() => setWeekStart(getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr())))}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
                 isCurrentWeek
                   ? "bg-primary-100 text-primary-700 hover:bg-primary-200"
@@ -1054,7 +1038,7 @@ function BookingCalendarContent() {
                           const daySlots = slotsByDay[dateStr] || [];
                           const cellSlots = daySlots.filter((s) => s.start_time === time);
                           const isTodayCell = isToday(day);
-                          const isPast = day < new Date(new Date().setHours(0, 0, 0, 0));
+                          const isPast = toLocalDateStr(day) < vietnamTodayStr();
 
                           return (
                             <div

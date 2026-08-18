@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDateTime } from "@/lib/datetime";
 
 interface SessionStudent {
   studentId: string;
@@ -453,12 +454,12 @@ export default function FeedbackTab() {
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("vi-VN", {
+    return formatVietnamDateTime(dateStr, {
       month: "short",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    });
+    }, "vi-VN");
   };
 
   const getSessionTypeLabel = (type: string) => {

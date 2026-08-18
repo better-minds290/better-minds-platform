@@ -9,6 +9,7 @@ import StatsOverview from "./components/StatsOverview";
 import CourseProgressBar from "./components/CourseProgressBar";
 import { getSupabase } from "@/lib/supabase";
 import NotificationBell from "@/components/feature/NotificationBell";
+import { formatVietnamDate } from "@/lib/datetime";
 
 interface DashboardData {
   enrollment: {
@@ -353,9 +354,8 @@ function DashboardContent() {
       if (result && result.unlocked) {
         showToast("success", t("dashboard.sprintUnlockSuccess", { n: data.currentSprint.sprint_number }));
       } else if (result && result.locked) {
-        const nextDate = result.next_unlock_date ? new Date(result.next_unlock_date) : null;
-        const dateStr = nextDate
-          ? `ngày ${nextDate.getDate()}/${nextDate.getMonth() + 1}`
+        const dateStr = result.next_unlock_date
+          ? `ngày ${formatVietnamDate(result.next_unlock_date, { day: "numeric", month: "numeric" }, "vi-VN")}`
           : t("dashboard.sprintUnlockOnSaturday");
         showToast("error", t("dashboard.sprintUnlockOnDate", { date: dateStr }));
       }
@@ -694,11 +694,11 @@ function DashboardContent() {
                     <div className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-background-50 border border-background-200 text-sm text-foreground-600 mb-6">
                       <i className="ri-calendar-line text-foreground-400"></i>
                       <span>
-                        {t("dashboard.completedStartLabel")} {new Date(data.statsData.enrolledSince).toLocaleDateString("vi-VN", { month: "long", day: "numeric", year: "numeric" })}
+                        {t("dashboard.completedStartLabel")} {formatVietnamDate(data.statsData.enrolledSince, { month: "long", day: "numeric", year: "numeric" }, "vi-VN")}
                       </span>
                       <span className="text-foreground-300">|</span>
                       <span>
-                        {t("dashboard.completedEndLabel")} {new Date(data.completedSprints[data.completedSprints.length - 1]?.completed_at || data.statsData.enrolledSince).toLocaleDateString("vi-VN", { month: "long", day: "numeric", year: "numeric" })}
+                        {t("dashboard.completedEndLabel")} {formatVietnamDate(data.completedSprints[data.completedSprints.length - 1]?.completed_at || data.statsData.enrolledSince, { month: "long", day: "numeric", year: "numeric" }, "vi-VN")}
                       </span>
                     </div>
 

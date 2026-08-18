@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
+import { formatVietnamDate } from "@/lib/datetime";
 
 interface SprintSessionSummary {
   session_number: number;
@@ -29,10 +30,10 @@ interface SprintTimelineProps {
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-US", {
+  return formatVietnamDate(iso, {
     month: "short",
     day: "numeric",
-  });
+  }, "en-US");
 }
 
 function formatDateRange(

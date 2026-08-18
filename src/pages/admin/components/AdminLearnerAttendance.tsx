@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDate } from "@/lib/datetime";
 
 interface AttendanceRecord {
   id: string;
@@ -261,11 +262,11 @@ export default function AdminLearnerAttendance() {
 
   const formatDate = (dateStr: string) => {
     try {
-      return new Date(dateStr).toLocaleDateString("vi-VN", {
+      return formatVietnamDate(dateStr, {
         day: "2-digit",
         month: "2-digit",
         year: "numeric",
-      });
+      }, "vi-VN");
     } catch {
       return dateStr;
     }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDate, formatVietnamDateTime } from "@/lib/datetime";
 
 interface LearnerSprint {
   learnerId: string;
@@ -26,7 +27,7 @@ function formatDeadline(dateStr: string | null): string {
   const d = new Date(dateStr);
   const now = new Date();
   const diffHours = (d.getTime() - now.getTime()) / (1000 * 60 * 60);
-  const formatted = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const formatted = formatVietnamDate(dateStr, { month: "short", day: "numeric", year: "numeric" }, "en-US");
   if (diffHours < 0) return formatted + " (Overdue)";
   if (diffHours <= 24) return formatted + " (" + Math.round(diffHours) + "h left)";
   return formatted;
@@ -34,7 +35,7 @@ function formatDeadline(dateStr: string | null): string {
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "-";
-  return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return formatVietnamDateTime(dateStr, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }, "en-US");
 }
 
 function getStatusColor(status: string): string {

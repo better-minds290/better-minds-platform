@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDateTime } from "@/lib/datetime";
 import LessonSummaryForm from "./LessonSummaryForm";
 
 interface LearnerLiveLessonProps {
@@ -280,14 +281,14 @@ export default function LearnerLiveLesson({
                 {scheduledAt && (
                   <p className="text-sm text-foreground-500 mt-1 flex items-center gap-1.5">
                     <i className="ri-time-line text-foreground-400"></i>
-                    {new Date(scheduledAt).toLocaleString("vi-VN", {
+                    {formatVietnamDateTime(scheduledAt, {
                       weekday: "long",
                       year: "numeric",
                       month: "long",
                       day: "numeric",
                       hour: "2-digit",
                       minute: "2-digit",
-                    })}
+                    }, "vi-VN")}
                   </p>
                 )}
               </div>

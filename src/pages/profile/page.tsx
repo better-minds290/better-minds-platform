@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import AuthGuard from "@/components/base/AuthGuard";
 import NotificationBell from "@/components/feature/NotificationBell";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDate } from "@/lib/datetime";
 import { useState, useEffect, useCallback } from "react";
 
 interface ProfileData {
@@ -158,8 +159,7 @@ function ProfileContent() {
 
   const formatDate = (iso: string): string => {
     if (!iso) return "--";
-    const d = new Date(iso);
-    return d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    return formatVietnamDate(iso, { year: "numeric", month: "long", day: "numeric" }, "en-US");
   };
 
   const hasChanges =

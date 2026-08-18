@@ -5,6 +5,7 @@ import AuthGuard from "@/components/base/AuthGuard";
 import NotificationBell from "@/components/feature/NotificationBell";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDate, formatVietnamDateTime } from "@/lib/datetime";
 
 interface SessionMaterial {
   id: string;
@@ -74,14 +75,12 @@ function getSessionTypeColor(type: string): string {
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "-";
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("vi-VN", { month: "long", day: "numeric", year: "numeric" });
+  return formatVietnamDate(dateStr, { month: "long", day: "numeric", year: "numeric" }, "vi-VN");
 }
 
 function formatDateTime(dateStr: string | null): string {
   if (!dateStr) return "-";
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("vi-VN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return formatVietnamDateTime(dateStr, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }, "vi-VN");
 }
 
 function computeDurationDays(createdAt: string, completedAt: string | null): number {

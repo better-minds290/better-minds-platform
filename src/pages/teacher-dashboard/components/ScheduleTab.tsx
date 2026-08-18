@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
+import { formatVietnamDate } from "@/lib/datetime";
 
 import AttendanceModal from "./AttendanceModal";
 import ClassDetailPanel from "./ClassDetailPanel";
@@ -193,8 +194,7 @@ export default function ScheduleTab({ todayStr }: ScheduleTabProps) {
   }, [displayClasses, displaySchedules, displayEnrollments, displaySprintSessions, filter, todayStr]);
 
   const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+    return formatVietnamDate(dateStr, { weekday: "short", month: "short", day: "numeric", year: "numeric" }, "en-US");
   };
 
   const formatTimeShort = (time: string) => {

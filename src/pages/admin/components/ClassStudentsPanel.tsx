@@ -1,6 +1,13 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import {
+  calendarDateToLocalDate,
+  formatVietnamDateShortVi,
+  getMondayOfWeek,
+  toLocalDateStr,
+  vietnamTodayStr,
+} from "@/lib/datetime";
 
 interface EnrolledStudent {
   student_id: string;
@@ -36,19 +43,6 @@ interface ClassStudentsPanelProps {
   onSuccess: (message: string) => void;
 }
 
-function getMondayOfWeek(date: Date): Date {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function toLocalDateStr(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
 function normHHMM(time: string): string {
   if (!time) return "00:00";
   return time.length > 5 ? time.substring(0, 5) : time;
@@ -63,12 +57,7 @@ function formatTime12h(time: string): string {
 }
 
 function formatDateShort(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00");
-  const days = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
-  const dayName = days[d.getDay()];
-  const day = String(d.getDate()).padStart(2, "0");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  return `${day}/${month} (${dayName})`;
+  return formatVietnamDateShortVi(dateStr);
 }
 
 export default function ClassStudentsPanel({
@@ -199,7 +188,7 @@ export default function ClassStudentsPanel({
   const fetchAvailableSlots = async (offset: number) => {
     setSlotsLoading(true);
     try {
-      const monday = getMondayOfWeek(new Date());
+      const monday = getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr()));
       monday.setDate(monday.getDate() + offset * 7);
       const sunday = new Date(monday);
       sunday.setDate(monday.getDate() + 6);

@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { formatVietnamDate } from "@/lib/datetime";
 import { Link } from "react-router-dom";
 
 interface CelebrationHeroProps {
@@ -12,19 +13,9 @@ interface CelebrationHeroProps {
 }
 
 function formatDateRange(start: string, end: string): string {
-  const startDate = new Date(start);
-  const endDate = new Date(end);
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-  const startDay = startDate.getUTCDate();
-  const startMonth = monthNames[startDate.getUTCMonth()];
-  const endDay = endDate.getUTCDate();
-  const endMonth = monthNames[endDate.getUTCMonth()];
-
-  if (startMonth === endMonth) {
-    return `${startMonth} ${startDay} – ${endDay}, ${endDate.getUTCFullYear()}`;
-  }
-  return `${startMonth} ${startDay} – ${endMonth} ${endDay}, ${endDate.getUTCFullYear()}`;
+  const startLabel = formatVietnamDate(start, { month: "short", day: "numeric" }, "en-US");
+  const endLabel = formatVietnamDate(end, { month: "short", day: "numeric", year: "numeric" }, "en-US");
+  return `${startLabel} – ${endLabel}`;
 }
 
 export default function CelebrationHero({

@@ -9,15 +9,9 @@ import FeedbackTab from "./components/FeedbackTab";
 import AvailabilityTab from "./components/AvailabilityTab";
 import ReportsTab from "./components/ReportsTab";
 import NotificationBell from "@/components/feature/NotificationBell";
+import { vietnamTodayStr } from "@/lib/datetime";
 
 type TabKey = "overview" | "sessions" | "feedback" | "availability" | "reports";
-
-function toLocalDateStr(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
 
 function TeacherDashboardContent() {
   const { t } = useTranslation();
@@ -31,7 +25,7 @@ function TeacherDashboardContent() {
 
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
 
-  const todayStr = toLocalDateStr(new Date());
+  const todayStr = vietnamTodayStr();
 
   const handleTabChange = (tab: TabKey) => {
     setActiveTab(tab);

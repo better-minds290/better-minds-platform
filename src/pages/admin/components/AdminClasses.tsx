@@ -3,6 +3,13 @@ import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
 import ClassModal from "./ClassModal";
 import ClassStudentsPanel from "./ClassStudentsPanel";
+import {
+  calendarDateToLocalDate,
+  formatVietnamDateShortVi,
+  getMondayOfWeek,
+  toLocalDateStr,
+  vietnamTodayStr,
+} from "@/lib/datetime";
 
 interface ClassData {
   id: string;
@@ -66,16 +73,11 @@ export default function AdminClasses() {
     try {
       const supabase = getSupabase();
 
-      // Compute current week range (Monday–Sunday)
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const dow = today.getDay();
-      const weekMonday = new Date(today);
-      weekMonday.setDate(today.getDate() - ((dow + 6) % 7));
+      const weekMonday = getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr()));
       const weekSunday = new Date(weekMonday);
       weekSunday.setDate(weekMonday.getDate() + 6);
-      const weekMondayStr = `${weekMonday.getFullYear()}-${String(weekMonday.getMonth() + 1).padStart(2, "0")}-${String(weekMonday.getDate()).padStart(2, "0")}`;
-      const weekSundayStr = `${weekSunday.getFullYear()}-${String(weekSunday.getMonth() + 1).padStart(2, "0")}-${String(weekSunday.getDate()).padStart(2, "0")}`;
+      const weekMondayStr = toLocalDateStr(weekMonday);
+      const weekSundayStr = toLocalDateStr(weekSunday);
 
       const [classesRes, coursesRes, teachersRes, enrollRes] = await Promise.all([
         supabase.from("classes").select("*").order("created_at", { ascending: false }),
@@ -138,12 +140,7 @@ export default function AdminClasses() {
         let scheduleText = "";
         if (classSchedules.length > 0) {
           scheduleText = classSchedules.map((s) => {
-            const d = new Date(s.date + "T00:00:00");
-            const days = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
-            const dayName = days[d.getDay()];
-            const day = String(d.getDate()).padStart(2, "0");
-            const month = String(d.getMonth() + 1).padStart(2, "0");
-            return `${day}/${month} (${dayName}) ${formatTimeShort(s.start_time)}–${formatTimeShort(s.end_time)}`;
+            return `${formatVietnamDateShortVi(s.date)} ${formatTimeShort(s.start_time)}–${formatTimeShort(s.end_time)}`;
           }).join(", ");
         }
 

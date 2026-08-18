@@ -3,6 +3,13 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
 import UnavailableDatesEditor from "./UnavailableDatesEditor";
+import {
+  calendarDateToLocalDate,
+  formatVietnamDate,
+  getMondayOfWeek,
+  toLocalDateStr,
+  vietnamTodayStr,
+} from "@/lib/datetime";
 
 interface TimeSlot {
   id?: string;
@@ -19,21 +26,8 @@ interface UnavailableDate {
   reason: string;
 }
 
-function toLocalDateStr(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 function getNextWeekRange() {
-  const now = new Date();
-  const dayOfWeek = now.getDay();
-  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-
-  const thisMonday = new Date(now);
-  thisMonday.setDate(now.getDate() + diffToMonday);
-  thisMonday.setHours(0, 0, 0, 0);
+  const thisMonday = getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr()));
 
   const nextMonday = new Date(thisMonday);
   nextMonday.setDate(thisMonday.getDate() + 7);
@@ -385,10 +379,7 @@ export default function AvailabilityTab() {
 
   const formatDateDisplay = (dateStr: string) => {
     if (!dateStr) return "";
-    const d = new Date(dateStr + "T00:00:00");
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    return `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+    return formatVietnamDate(dateStr, { weekday: "short", month: "short", day: "numeric", year: "numeric" }, "en-US");
   };
 
   const formatDuration = (mins: number) => {

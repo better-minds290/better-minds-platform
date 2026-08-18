@@ -105,7 +105,7 @@ serve(async (req: Request) => {
       await supabaseAdmin.from("notifications").insert({
         user_id: enrollment.learner_id,
         title: "Deadline Extended — Sprint " + sprint.sprint_number,
-        message: "Your admin has extended the deadline for Sprint " + sprint.sprint_number + " by " + days + " day(s). Your new final deadline is " + new Date(newDeadline3 || "").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + ".",
+        message: "Your admin has extended the deadline for Sprint " + sprint.sprint_number + " by " + days + " day(s). Your new final deadline is " + new Date(newDeadline3 || "").toLocaleDateString("en-US", { timeZone: "Asia/Ho_Chi_Minh", month: "short", day: "numeric", year: "numeric" }) + ".",
         type: "system",
         is_read: false,
         created_at: new Date().toISOString(),
