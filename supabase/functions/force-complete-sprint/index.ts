@@ -105,13 +105,21 @@ serve(async (req: Request) => {
       (s) => s.status !== "completed" && s.status !== "absent"
     );
 
+    const absentBookedSessions = (sprintSessions || []).filter(
+      (s) => s.status === "absent" && s.class_id
+    );
+
     // Release booked-class links for this learner only (preserve shared classes for others).
     if (learnerId) {
       const touchedClassIds = new Set<string>();
 
-      for (const session of sessionsToComplete) {
-        if (!session.class_id) continue;
-        const classId = session.class_id;
+      const sessionsForClassRelease = [
+        ...sessionsToComplete.filter((s) => s.class_id),
+        ...absentBookedSessions,
+      ];
+
+      for (const session of sessionsForClassRelease) {
+        const classId = session.class_id!;
         touchedClassIds.add(classId);
 
         await supabase
@@ -132,6 +140,28 @@ serve(async (req: Request) => {
             .delete()
             .eq("schedule_id", schedule.id)
             .eq("student_id", learnerId);
+        }
+      }
+
+      // Keep absent history; remove active booking linkage only.
+      for (const session of absentBookedSessions) {
+        const { error: absentReleaseErr } = await supabase
+          .from("sprint_sessions")
+          .update({
+            status: "absent",
+            class_id: null,
+            teacher_id: null,
+            scheduled_at: null,
+            meeting_link: null,
+          })
+          .eq("id", session.id);
+
+        if (absentReleaseErr) {
+          console.error("Absent session booking release error:", absentReleaseErr);
+          return new Response(JSON.stringify({ success: false, error: "Failed to release absent session booking" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
       }
 

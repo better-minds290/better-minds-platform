@@ -1,9 +1,14 @@
 import { canForceCompleteSprint, selectCurrentAdminSprint, type AdminSprintRow } from "./adminSprintSelection";
 import {
+  buildAbsentSessionBookingReleaseUpdate,
   buildForceCompleteSessionUpdate,
+  planBookingReleaseForAbsentBookedSessions,
   planBookingReleaseForForceComplete,
   sessionsEligibleForForceComplete,
+  sessionsNeedingLearnerClassRelease,
+  sessionsWithAbsentBookings,
   shouldDeleteEmptyUpcomingClass,
+  shouldShowAttendanceForceComplete,
   type ForceCompleteSessionRow,
 } from "./forceCompleteSprint";
 
@@ -122,7 +127,7 @@ function sprint(n: number, status: string, id = `sp-${n}`): AdminSprintRow {
   );
 }
 
-// 7. Session 1 without lesson_summary still eligible (absent excluded only)
+// 7. Session 1 without lesson_summary still eligible (absent excluded from force-complete only)
 {
   const sessions: ForceCompleteSessionRow[] = [
     { id: "s1", class_id: null, status: "in_progress" },
@@ -131,18 +136,150 @@ function sprint(n: number, status: string, id = `sp-${n}`): AdminSprintRow {
   assertEqual(
     sessionsEligibleForForceComplete(sessions).map((s) => s.id),
     ["s1"],
-    "session 1 force-completes; absent skipped"
+    "session 1 force-completes; absent not force-completed"
   );
 }
 
-// After force complete sprint 2, selection shows sprint 3 pending
+// 1. Absent + booked solo class — release plan + keep absent status on unlink
+{
+  const sessions: ForceCompleteSessionRow[] = [
+    { id: "abs-solo", class_id: "solo-class", status: "absent" },
+    { id: "s3", class_id: null, status: "available" },
+  ];
+  assertEqual(
+    sessionsWithAbsentBookings(sessions).map((s) => s.id),
+    ["abs-solo"],
+    "detect absent booked session"
+  );
+  const absentPlans = planBookingReleaseForAbsentBookedSessions(sessions);
+  assertEqual(absentPlans.length, 1, "solo absent booking release plan");
+  assertEqual(absentPlans[0].classId, "solo-class", "targets solo class");
+  const absentUpdate = buildAbsentSessionBookingReleaseUpdate();
+  assertEqual(absentUpdate.status, "absent", "absent status preserved");
+  assertEqual(absentUpdate.class_id, null, "class_id cleared");
+  assertEqual(
+    sessionsNeedingLearnerClassRelease(sessions).map((s) => s.id),
+    ["abs-solo"],
+    "only booked sessions need class release"
+  );
+}
+
+// 2. Absent + booked group class — learner A released; class kept when others remain
+{
+  assertEqual(
+    shouldDeleteEmptyUpcomingClass({ remainingEnrollmentCount: 1, scheduleStatus: "scheduled" }),
+    false,
+    "group class kept when learner B remains"
+  );
+  const groupAbsent: ForceCompleteSessionRow[] = [
+    { id: "abs-a", class_id: "shared-class", status: "absent" },
+  ];
+  assertEqual(
+    planBookingReleaseForAbsentBookedSessions(groupAbsent)[0].removeLearnerEnrollment,
+    true,
+    "only learner A enrollment removed"
+  );
+}
+
+// 3. Absent + no booking — no release plan, no error path
+{
+  const sessions: ForceCompleteSessionRow[] = [
+    { id: "abs-plain", class_id: null, status: "absent" },
+  ];
+  assertEqual(
+    planBookingReleaseForAbsentBookedSessions(sessions),
+    [],
+    "no absent booking release without class_id"
+  );
+  assertEqual(
+    sessionsWithAbsentBookings(sessions),
+    [],
+    "no absent booked sessions"
+  );
+}
+
+// 4. Non-absent booked session — existing force-complete cleanup unchanged
+{
+  const sessions: ForceCompleteSessionRow[] = [
+    { id: "s2", class_id: "class-1", status: "in_progress" },
+  ];
+  const plans = planBookingReleaseForForceComplete(sessions);
+  assertEqual(plans.length, 1, "one release plan");
+  assertEqual(plans[0].classId, "class-1", "targets booked class");
+  const update = buildForceCompleteSessionUpdate(sessions[0], "2026-01-01T00:00:00Z");
+  assertEqual(update.class_id, null, "unlinks class on complete");
+}
+
+// 5. Completed historical class — do not delete
+{
+  assertEqual(
+    shouldDeleteEmptyUpcomingClass({ remainingEnrollmentCount: 0, scheduleStatus: "completed" }),
+    false,
+    "keep completed historical schedule"
+  );
+}
+
+// 6. Attendance absent_session → FC available
+{
+  assertEqual(
+    shouldShowAttendanceForceComplete({
+      type: "absent_session",
+      related_sprint_id: "sp-1",
+      resolved: false,
+    }),
+    true,
+    "FC shown for unresolved absent_session"
+  );
+}
+
+// 7. Attendance sprint_unlock_late → FC NOT available
+{
+  assertEqual(
+    shouldShowAttendanceForceComplete({
+      type: "sprint_unlock_late",
+      related_sprint_id: "sp-2",
+      resolved: false,
+    }),
+    false,
+    "FC hidden for sprint_unlock_late"
+  );
+  assertEqual(
+    shouldShowAttendanceForceComplete({
+      type: "absent_session",
+      related_sprint_id: "sp-1",
+      resolved: true,
+    }),
+    false,
+    "FC hidden when resolved"
+  );
+}
+
+// 8. Next sprint remains pending after force complete
 {
   const afterForceComplete = selectCurrentAdminSprint([
     sprint(1, "completed"),
     sprint(2, "completed"),
     sprint(3, "pending"),
   ]);
-  assertEqual(afterForceComplete?.sprint_number, 3, "after FC sprint 2, show sprint 3");
+  assertEqual(afterForceComplete?.sprint_number, 3, "after FC sprint 2, show sprint 3 pending");
+}
+
+// 9. Absence history unchanged — FC helpers do not touch learner_attendance (documented contract)
+{
+  assertEqual(
+    planBookingReleaseForAbsentBookedSessions([{ id: "a", class_id: "c", status: "absent" }]).length,
+    1,
+    "absent booking release is session/class only"
+  );
+  assertEqual(
+    shouldShowAttendanceForceComplete({
+      type: "absent_session",
+      related_sprint_id: null,
+      resolved: false,
+    }),
+    false,
+    "FC requires related_sprint_id"
+  );
 }
 
 console.log("forceCompleteSprint tests passed");

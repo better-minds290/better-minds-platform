@@ -627,7 +627,7 @@ export default function AdminLearnerAttendance() {
                               {t("auth.adminAttendanceActionReopen")}
                             </button>
                           )}
-                          {record.related_sprint_id && (
+                          {record.type === "absent_session" && record.related_sprint_id && (
                             <button
                               onClick={() => handleForceComplete(record.id, record.related_sprint_id!)}
                               disabled={forceCompleting === record.id || resolving === record.id || reopening === record.id || unlocking === record.id}

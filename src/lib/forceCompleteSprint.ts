@@ -68,3 +68,63 @@ export function buildForceCompleteSessionUpdate(
   }
   return base;
 }
+
+export function sessionsWithAbsentBookings(
+  sessions: ForceCompleteSessionRow[]
+): ForceCompleteSessionRow[] {
+  return sessions.filter((s) => s.status === "absent" && !!s.class_id);
+}
+
+export interface AbsentBookingReleasePlan {
+  sessionId: string;
+  classId: string;
+  removeLearnerEnrollment: true;
+  removeLearnerAttendance: true;
+  unlinkBookingFieldsKeepAbsent: true;
+}
+
+export function planBookingReleaseForAbsentBookedSessions(
+  sessions: ForceCompleteSessionRow[]
+): AbsentBookingReleasePlan[] {
+  return sessionsWithAbsentBookings(sessions).map((s) => ({
+    sessionId: s.id,
+    classId: s.class_id!,
+    removeLearnerEnrollment: true as const,
+    removeLearnerAttendance: true as const,
+    unlinkBookingFieldsKeepAbsent: true as const,
+  }));
+}
+
+/** Clear active booking from an absent session; preserve status = absent. */
+export function buildAbsentSessionBookingReleaseUpdate(): Record<string, unknown> {
+  return {
+    status: "absent",
+    class_id: null,
+    teacher_id: null,
+    scheduled_at: null,
+    meeting_link: null,
+  };
+}
+
+/** Sessions that need class_enrollment / session_attendance release during force-complete. */
+export function sessionsNeedingLearnerClassRelease(
+  sessions: ForceCompleteSessionRow[]
+): ForceCompleteSessionRow[] {
+  const byId = new Map<string, ForceCompleteSessionRow>();
+  for (const session of sessionsEligibleForForceComplete(sessions)) {
+    if (session.class_id) byId.set(session.id, session);
+  }
+  for (const session of sessionsWithAbsentBookings(sessions)) {
+    byId.set(session.id, session);
+  }
+  return [...byId.values()];
+}
+
+/** Admin Attendance tab: FC Sprint only for unresolved absent_session rows. */
+export function shouldShowAttendanceForceComplete(record: {
+  type: string;
+  related_sprint_id: string | null;
+  resolved: boolean;
+}): boolean {
+  return !record.resolved && record.type === "absent_session" && !!record.related_sprint_id;
+}
