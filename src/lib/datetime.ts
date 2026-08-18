@@ -90,6 +90,11 @@ export function formatVietnamTime(
   return date.toLocaleTimeString(locale, { timeZone: VN_TIMEZONE, ...options });
 }
 
+/** Map i18n language code to Intl locale for Vietnam-time display. */
+export function getUiDateLocale(language?: string): string {
+  return language?.startsWith("vi") ? "vi-VN" : "en-US";
+}
+
 export function formatVietnamDateTime(
   input: string | Date | null | undefined,
   options: Intl.DateTimeFormatOptions = {

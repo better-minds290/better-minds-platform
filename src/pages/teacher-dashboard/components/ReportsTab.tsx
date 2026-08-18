@@ -98,7 +98,7 @@ export default function ReportsTab() {
 
           reports.push({
             learner_id: enrollment.learner_id,
-            learner_name: learner?.full_name || "Unknown",
+            learner_name: learner?.full_name || t("teacher.unknownName"),
             learner_email: learner?.email || "",
             course_name: course?.name || "",
             current_sprint: currentSprint,
@@ -136,7 +136,7 @@ export default function ReportsTab() {
 
           tReports.push({
             teacher_id: teacher.id,
-            teacher_name: teacher.full_name || "Unknown",
+            teacher_name: teacher.full_name || t("teacher.unknownName"),
             total_sessions: (sessions || []).length,
             completed_sessions: completed.length,
             avg_rating_given: withRatings.length > 0 ? Math.round((avgRating / withRatings.length) * 10) / 10 : 0,
@@ -293,7 +293,7 @@ export default function ReportsTab() {
                       <td className="p-3 text-center">
                         {r.current_sprint > 0 ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-primary-100 text-primary-700">
-                            Sprint {r.current_sprint}
+                            {t("teacher.reportsSprintBadge", { n: r.current_sprint })}
                           </span>
                         ) : (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-secondary-100 text-secondary-700">
@@ -306,7 +306,7 @@ export default function ReportsTab() {
                           <div className="flex flex-col gap-1.5">
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-xs font-semibold text-foreground-700 tabular-nums whitespace-nowrap">
-                                {r.completed_sprints}/{r.total_sprints} sprint
+                                {t("teacher.reportsProgressSprints", { completed: r.completed_sprints, total: r.total_sprints })}
                               </span>
                               <span className={`text-[11px] font-bold tabular-nums whitespace-nowrap ${
                                 r.completed_sprints === r.total_sprints

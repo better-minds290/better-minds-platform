@@ -67,7 +67,7 @@ export default function StudentsTab() {
 
         if (!studentMap[learnerId].courses[courseData.id]) {
           studentMap[learnerId].courses[courseData.id] = {
-            courseName: courseData.name || "Unknown",
+            courseName: courseData.name || t("teacher.unknownCourseName"),
             level: courseData.level || "",
             sprintIds: new Set(),
             completed: 0,
@@ -108,7 +108,7 @@ export default function StudentsTab() {
         }));
         return {
           id: lid,
-          full_name: p.full_name || "Unknown",
+          full_name: p.full_name || t("teacher.unknownName"),
           email: p.email || "",
           phone: p.phone || "",
           avatar_url: p.avatar_url || null,
@@ -372,7 +372,7 @@ export default function StudentsTab() {
           </div>
 
           <p className="mt-4 text-xs text-foreground-400">
-            {filteredStudents.length} {t("teacher.students")} total
+            {t("teacher.studentsTotalFooter", { count: filteredStudents.length })}
           </p>
         </>
       )}

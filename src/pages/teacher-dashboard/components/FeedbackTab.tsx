@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
-import { formatVietnamDateTime } from "@/lib/datetime";
+import { formatVietnamDateTime, getUiDateLocale } from "@/lib/datetime";
 
 interface SessionStudent {
   studentId: string;
@@ -31,7 +31,8 @@ interface PendingSession {
 const ratingColors = ["bg-accent-400", "bg-secondary-400", "bg-secondary-300", "bg-primary-300", "bg-primary-400"];
 
 export default function FeedbackTab() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const dateLocale = getUiDateLocale(i18n.language);
   const ratingLabels = [t("liveLesson.ratingPoor"), t("liveLesson.ratingFair"), t("liveLesson.ratingGood"), t("liveLesson.ratingGreat"), t("liveLesson.ratingExcellent")];
   const { profile } = useAuth();
   const supabase = getSupabase();
@@ -265,7 +266,7 @@ export default function FeedbackTab() {
               attendance.forEach((a: any) => {
                 students.push({
                   studentId: a.student_id,
-                  studentName: profileMap[a.student_id]?.name || "Unknown",
+                  studentName: profileMap[a.student_id]?.name || t("teacher.unknownName"),
                   studentEmail: profileMap[a.student_id]?.email || "",
                   grade: a.grade,
                   feedback: a.teacher_feedback,
@@ -328,7 +329,7 @@ export default function FeedbackTab() {
           sessionType: sData.session_type,
           status: sData.status,
           scheduledAt: sData.scheduled_at,
-          courseName: sData.sprint?.enrollment?.course?.name || "Unknown",
+          courseName: sData.sprint?.enrollment?.course?.name || t("teacher.unknownCourseName"),
           students,
           classId: sData.class_id || null,
           scheduleId: scheduleId || null,
@@ -459,7 +460,7 @@ export default function FeedbackTab() {
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    }, "vi-VN");
+    }, dateLocale);
   };
 
   const getSessionTypeLabel = (type: string) => {

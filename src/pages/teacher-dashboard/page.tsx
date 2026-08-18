@@ -51,7 +51,7 @@ function TeacherDashboardContent() {
       case "admin":
         return t("dashboard.roleAdmin");
       default:
-        return "Teacher";
+        return t("dashboard.roleTeacher");
     }
   };
 

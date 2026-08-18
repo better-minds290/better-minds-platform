@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
-import { formatVietnamDate, formatVietnamDateTime } from "@/lib/datetime";
+import { formatVietnamDate, formatVietnamDateTime, getUiDateLocale } from "@/lib/datetime";
 import AttendanceModal from "./AttendanceModal";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -70,9 +70,9 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string, locale: string): string {
   if (!dateStr) return "-";
-  return formatVietnamDateTime(dateStr, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }, "en-US");
+  return formatVietnamDateTime(dateStr, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }, locale);
 }
 
 function getFileIcon(fileType: string): string {
@@ -85,7 +85,8 @@ function getFileIcon(fileType: string): string {
 }
 
 export default function ClassDetailPanel({ classId, className, classSubject }: ClassDetailPanelProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const dateLocale = getUiDateLocale(i18n.language);
   const { profile } = useAuth();
   const supabase = getSupabase();
   const [activeSubTab, setActiveSubTab] = useState<SubTab>("students");
@@ -464,9 +465,9 @@ export default function ClassDetailPanel({ classId, className, classSubject }: C
       );
       setActiveFeedbackId(null);
       setFeedbackDraft("");
-      setToast({ message: "Feedback submitted!", type: "success" });
+      setToast({ message: t("teacher.feedbackSavedToast"), type: "success" });
     } catch {
-      setToast({ message: "Could not save feedback.", type: "error" });
+      setToast({ message: t("teacher.feedbackSaveErrorToast"), type: "error" });
     } finally {
       setSavingFeedback(false);
     }
@@ -524,7 +525,7 @@ export default function ClassDetailPanel({ classId, className, classSubject }: C
             <div className="mb-4 p-3 rounded-lg bg-accent-50/50 border border-accent-200/50">
               <p className="text-xs font-semibold text-foreground-600 mb-2 flex items-center gap-1.5">
                 <i className="ri-calendar-check-line text-accent-600"></i>
-                Upcoming Schedules
+                {t("teacher.classDetailUpcomingSchedules")}
               </p>
               <div className="flex items-center gap-2 flex-wrap">
                 {schedules.filter(s => s.status !== "completed").slice(0, 4).map((sched) => (
@@ -534,11 +535,11 @@ export default function ClassDetailPanel({ classId, className, classSubject }: C
                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-accent-100 text-accent-700 hover:bg-accent-200 transition-colors cursor-pointer whitespace-nowrap"
                   >
                     <i className="ri-clipboard-line text-[10px]"></i>
-                    {formatVietnamDate(sched.date, { month: "short", day: "numeric" }, "en-US")} {sched.start_time.slice(0, 5)}
+                    {formatVietnamDate(sched.date, { month: "short", day: "numeric" }, dateLocale)} {sched.start_time.slice(0, 5)}
                   </button>
                 ))}
                 {schedules.filter(s => s.status !== "completed").length > 4 && (
-                  <span className="text-xs text-foreground-400">+{schedules.filter(s => s.status !== "completed").length - 4} more</span>
+                  <span className="text-xs text-foreground-400">{t("teacher.classDetailMoreCount", { count: schedules.filter(s => s.status !== "completed").length - 4 })}</span>
                 )}
               </div>
             </div>
@@ -580,7 +581,7 @@ export default function ClassDetailPanel({ classId, className, classSubject }: C
                     )}
                     {enr && (
                       <span className="text-[10px] text-foreground-400 hidden sm:inline">
-                        {formatVietnamDate(enr.enrolled_at, { month: "short", day: "numeric" }, "en-US")}
+                        {formatVietnamDate(enr.enrolled_at, { month: "short", day: "numeric" }, dateLocale)}
                       </span>
                     )}
                   </div>
@@ -646,7 +647,7 @@ export default function ClassDetailPanel({ classId, className, classSubject }: C
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-foreground-900">{sub.studentName}</p>
-                        <p className="text-xs text-foreground-500">Sprint {sub.sprintNumber} · Session {sub.sessionNumber}</p>
+                        <p className="text-xs text-foreground-500">{t("feedback.sprintSessionLabel", { sprint: sub.sprintNumber, session: sub.sessionNumber })}</p>
                       </div>
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
                         sub.feedback ? "bg-accent-100 text-accent-700" : "bg-secondary-100 text-secondary-700"
@@ -733,7 +734,7 @@ export default function ClassDetailPanel({ classId, className, classSubject }: C
         <div>
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs text-foreground-500">
-              {matLoading ? "..." : `${materials.length} material${materials.length !== 1 ? "s" : ""}`}
+              {matLoading ? "..." : t("teacher.materialsCountLabel", { count: materials.length })}
             </p>
             <button
               onClick={() => { setShowUploadForm(true); setUploadTitle(""); setUploadDesc(""); setUploadFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
@@ -825,7 +826,7 @@ export default function ClassDetailPanel({ classId, className, classSubject }: C
                     <div className="flex items-center gap-2 text-xs text-foreground-500 flex-wrap">
                       <span className="truncate">{mat.file_name}</span>
                       <span>{formatFileSize(mat.file_size)}</span>
-                      <span className="hidden sm:inline">{formatDate(mat.created_at)}</span>
+                      <span className="hidden sm:inline">{formatDate(mat.created_at, dateLocale)}</span>
                     </div>
                   </div>
                   <button onClick={() => handleDownload(mat)} className="w-7 h-7 flex items-center justify-center rounded text-foreground-400 hover:text-primary-600 hover:bg-primary-50 cursor-pointer" title={t("teacher.materialsDownload")}>

@@ -8,6 +8,7 @@ import {
   formatVietnamDate,
   formatVietnamTime,
   getMondayOfWeek,
+  getUiDateLocale,
   toLocalDateStr,
   toVietnamDateStr,
 } from "@/lib/datetime";
@@ -85,7 +86,8 @@ function groupSprintSessions<T extends { class_id: string | null; session_number
 }
 
 export default function OverviewTab({ todayStr }: OverviewTabProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const dateLocale = getUiDateLocale(i18n.language);
   const { profile } = useAuth();
   const [availability, setAvailability] = useState<Record<string, AvailabilitySlot[]>>();
   const [availLoading, setAvailLoading] = useState(true);
@@ -165,7 +167,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
           class_id: s.class_id || null,
           sprint_number: s.sprint?.sprint_number ?? 0,
           sprint_status: sprintStatusMap[s.sprint_id] || s.sprint?.status || "active",
-          course_name: s.sprint?.enrollment?.course?.name || "Unknown",
+          course_name: s.sprint?.enrollment?.course?.name || t("teacher.unknownCourseName"),
           student_name: "",
           learner_id: s.sprint?.enrollment?.learner_id || "",
         }));
@@ -209,7 +211,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
               .in("id", learnerIds);
             const nameMap: Record<string, string> = {};
             (profilesData || []).forEach((p: any) => { nameMap[p.id] = p.full_name; });
-            sprintMapped.forEach((s) => { s.student_name = nameMap[s.learner_id] || "Unknown"; });
+            sprintMapped.forEach((s) => { s.student_name = nameMap[s.learner_id] || t("teacher.unknownName"); });
           }
         }
 
@@ -534,17 +536,17 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-foreground-900 truncate">
-                      {typeLabel} · Session {session.session_number} — {session.course_name}
+                      {typeLabel} · {t("session.session")} {session.session_number} — {session.course_name}
                     </p>
                     <p className="text-xs text-foreground-500">
                       {studentNames || t("teacher.overviewStudent")}
-                      {studentCount > 1 && ` · ${t("teacher.studentCountAbbr", { count: studentCount })}`} · Sprint {session.sprint_number}
+                      {studentCount > 1 && ` · ${t("teacher.studentCountAbbr", { count: studentCount })}`} · {t("dashboard.sprint")} {session.sprint_number}
                     </p>
                   </div>
                   <div className="text-right shrink-0">
                     {session.scheduled_at ? (
                       <p className="text-sm font-medium text-foreground-900">
-                        {formatVietnamTime(session.scheduled_at, { hour: "2-digit", minute: "2-digit" }, "vi-VN")}
+                        {formatVietnamTime(session.scheduled_at, { hour: "2-digit", minute: "2-digit" }, dateLocale)}
                       </p>
                     ) : (
                       <p className="text-sm text-foreground-400">-:--</p>
@@ -575,7 +577,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
       <div>
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-heading text-lg font-bold text-foreground-950">
-            {t("teacher.calendarWeek")} {formatVietnamDate(toLocalDateStr(weekStart), { month: "short", day: "numeric" }, "en-US")}
+            {t("teacher.calendarWeek")} {formatVietnamDate(toLocalDateStr(weekStart), { month: "short", day: "numeric" }, dateLocale)}
           </h3>
           {!availLoading && totalAvailSlots > 0 && (
             <div className="flex items-center gap-4 text-xs">
@@ -619,7 +621,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
                     <div
                       key={`avail-${ai}`}
                       className="text-[9px] leading-tight px-1.5 py-0.5 rounded bg-accent-100/80 border border-accent-200/70 text-accent-700 truncate"
-                      title={`Available: ${slot.start_time}-${slot.end_time}`}
+                      title={t("teacher.availabilityFree") + `: ${slot.start_time}-${slot.end_time}`}
                     >
                       <span className="font-semibold">{formatTimeShort(slot.start_time)}-{formatTimeShort(slot.end_time)}</span>
                       <span className="ml-1 opacity-70">{t("teacher.availabilityFree")}</span>
@@ -644,7 +646,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
                     const s = group[0];
                     const count = group.length;
                     const timeStr = s.scheduled_at
-                      ? formatVietnamTime(s.scheduled_at, { hour: "2-digit", minute: "2-digit" }, "vi-VN")
+                      ? formatVietnamTime(s.scheduled_at, { hour: "2-digit", minute: "2-digit" }, dateLocale)
                       : "";
                     const statusBadge = s.status === "completed"
                       ? "bg-accent-100/80 border-accent-200/70 text-accent-700"
@@ -657,7 +659,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
                         key={s.id}
                         to={`/dashboard/sprint/${s.sprint_id}/session/${s.id}`}
                         className="block text-[9px] leading-tight px-1.5 py-0.5 rounded border truncate cursor-pointer hover:opacity-80 transition-opacity"
-                        title={`Sprint ${s.sprint_number} · Session ${s.session_number} — ${s.course_name}`}
+                        title={t("feedback.sprintSessionLabel", { sprint: s.sprint_number, session: s.session_number }) + ` — ${s.course_name}`}
                       >
                         <span className={`inline-flex items-center gap-0.5 px-1 py-0 rounded-[2px] text-[8px] font-bold ${statusBadge}`}>
                           {label}{count > 1 ? ` +${count - 1}` : ""}
@@ -721,7 +723,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-foreground-800 truncate">
-                      Sprint {session.sprint_number} · Session {session.session_number} — {session.course_name}
+                      {t("feedback.sprintSessionLabel", { sprint: session.sprint_number, session: session.session_number })} — {session.course_name}
                     </p>
                     <p className="text-xs text-foreground-400">
                       {studentNames || t("teacher.overviewStudent")}
@@ -733,7 +735,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
                       <i className="ri-time-line text-[9px]"></i>
                       {t("teacher.overviewPendingGrade")}
                     </span>
-                    {session.scheduled_at ? formatVietnamDate(session.scheduled_at, { weekday: "short", month: "short", day: "numeric" }, "vi-VN") : "-"}
+                    {session.scheduled_at ? formatVietnamDate(session.scheduled_at, { weekday: "short", month: "short", day: "numeric" }, dateLocale) : "-"}
                   </div>
                   <i className="ri-arrow-right-line text-foreground-300 opacity-0 group-hover:opacity-100 transition-opacity"></i>
                 </Link>
@@ -774,7 +776,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-foreground-800 truncate">
-                      Sprint {session.sprint_number} · Session {session.session_number} — {session.course_name}
+                      {t("feedback.sprintSessionLabel", { sprint: session.sprint_number, session: session.session_number })} — {session.course_name}
                     </p>
                     <p className="text-xs text-foreground-400">
                       {studentNames || t("teacher.overviewStudent")}
@@ -782,7 +784,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
                     </p>
                   </div>
                   <div className="text-right shrink-0 text-xs text-foreground-500">
-                    {session.scheduled_at ? formatVietnamDate(session.scheduled_at, { weekday: "short", month: "short", day: "numeric" }, "vi-VN") : "-"}
+                    {session.scheduled_at ? formatVietnamDate(session.scheduled_at, { weekday: "short", month: "short", day: "numeric" }, dateLocale) : "-"}
                   </div>
                   <i className="ri-arrow-right-line text-foreground-300 opacity-0 group-hover:opacity-100 transition-opacity"></i>
                 </Link>
@@ -790,7 +792,7 @@ export default function OverviewTab({ todayStr }: OverviewTabProps) {
             })}
             {groupSprintSessions(stats.sprintSessions.filter((s) => s.status !== "completed" && s.status !== "awaiting_feedback" && s.status !== "locked" && s.sprint_status !== "locked")).length > 5 && (
               <p className="text-xs text-foreground-400 text-center pt-1">
-                +{groupSprintSessions(stats.sprintSessions.filter((s) => s.status !== "completed" && s.status !== "awaiting_feedback" && s.status !== "locked" && s.sprint_status !== "locked")).length - 5} more · <Link to="/teacher/dashboard?tab=sessions" className="text-primary-500 hover:text-primary-600 font-medium cursor-pointer">{t("teacher.viewAllSessions")}</Link>
+                {t("teacher.overviewMoreCount", { count: groupSprintSessions(stats.sprintSessions.filter((s) => s.status !== "completed" && s.status !== "awaiting_feedback" && s.status !== "locked" && s.sprint_status !== "locked")).length - 5 })} · <Link to="/teacher/dashboard?tab=sessions" className="text-primary-500 hover:text-primary-600 font-medium cursor-pointer">{t("teacher.viewAllSessions")}</Link>
               </p>
             )}
           </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
-import { formatVietnamDate } from "@/lib/datetime";
+import { formatVietnamDate, getUiDateLocale } from "@/lib/datetime";
 
 interface AttendanceModalProps {
   scheduleId: string;
@@ -43,7 +43,8 @@ export default function AttendanceModal({
   className,
   onClose,
 }: AttendanceModalProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const dateLocale = getUiDateLocale(i18n.language);
   const [students, setStudents] = useState<Student[]>([]);
   const [attendanceMap, setAttendanceMap] = useState<Record<string, AttendanceStatus>>({});
   const [notesMap, setNotesMap] = useState<Record<string, string>>({});
@@ -158,7 +159,7 @@ export default function AttendanceModal({
   };
 
   const formatDate = (dateStr: string) => {
-    return formatVietnamDate(dateStr, { weekday: "long", month: "short", day: "numeric", year: "numeric" }, "en-US");
+    return formatVietnamDate(dateStr, { weekday: "long", month: "short", day: "numeric", year: "numeric" }, dateLocale);
   };
 
   const statusCount = Object.values(attendanceMap).reduce(

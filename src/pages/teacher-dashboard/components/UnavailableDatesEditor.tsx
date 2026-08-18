@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { formatVietnamDate, vietnamTodayStr } from "@/lib/datetime";
+import { formatVietnamDate, getUiDateLocale, vietnamTodayStr } from "@/lib/datetime";
 
 interface UnavailableDate {
   id?: string;
@@ -20,7 +20,8 @@ export default function UnavailableDatesEditor({
   onUpdate,
   onRemove,
 }: UnavailableDatesEditorProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const dateLocale = getUiDateLocale(i18n.language);
   const todayStr = vietnamTodayStr();
 
   const formatDate = (dateStr: string) => {
@@ -29,7 +30,7 @@ export default function UnavailableDatesEditor({
       month: "short",
       day: "numeric",
       year: "numeric",
-    }, "en-US");
+    }, dateLocale);
   };
 
   return (

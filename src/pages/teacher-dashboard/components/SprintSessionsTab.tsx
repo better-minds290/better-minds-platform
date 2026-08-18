@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
-import { formatVietnamDateTime, toVietnamDateStr } from "@/lib/datetime";
+import { formatVietnamDateTime, getUiDateLocale, toVietnamDateStr } from "@/lib/datetime";
 import { Link } from "react-router-dom";
 
 interface SprintSession {
@@ -58,7 +58,8 @@ function getGroupStatus(sessions: SprintSession[]): string {
 type FilterType = "all" | "upcoming" | "completed";
 
 export default function SprintSessionsTab() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const dateLocale = getUiDateLocale(i18n.language);
   const { profile } = useAuth();
   const [sessions, setSessions] = useState<SprintSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -235,10 +236,10 @@ export default function SprintSessionsTab() {
           grade: s.grade,
           sprint_number: sprint?.sprint_number ?? 0,
           sprint_status: sprint?.status ?? "active",
-          course_name: course?.name || "Unknown Course",
+          course_name: course?.name || t("teacher.unknownCourseName"),
           course_level: course?.level || "",
           course_id: enrollment?.course_id || "",
-          student_name: learner?.full_name || "Unknown",
+          student_name: learner?.full_name || t("teacher.unknownName"),
           student_email: learner?.email || "",
           student_phone: learner?.phone || "",
           student_avatar_url: learner?.avatar_url || null,
@@ -349,7 +350,7 @@ export default function SprintSessionsTab() {
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    }, "vi-VN");
+    }, dateLocale);
   };
 
   function parseLessonSummary(
@@ -540,7 +541,7 @@ export default function SprintSessionsTab() {
                           {t("teacher.studentLabel")}: {studentNames}
                           {studentCount > 1 && (
                             <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-primary-100 text-primary-700 whitespace-nowrap">
-                              {studentCount} HV
+                              {t("teacher.studentCountAbbr", { count: studentCount })}
                             </span>
                           )}
                         </span>

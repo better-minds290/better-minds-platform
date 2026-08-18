@@ -7,6 +7,7 @@ import {
   calendarDateToLocalDate,
   formatVietnamDate,
   getMondayOfWeek,
+  getUiDateLocale,
   toLocalDateStr,
   vietnamTodayStr,
 } from "@/lib/datetime";
@@ -25,6 +26,8 @@ interface UnavailableDate {
   date: string;
   reason: string;
 }
+
+const AVAILABILITY_MONTH_KEYS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"] as const;
 
 function getNextWeekRange() {
   const thisMonday = getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr()));
@@ -50,7 +53,8 @@ function isDateInNextWeek(dateStr: string): boolean {
 }
 
 export default function AvailabilityTab() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const dateLocale = getUiDateLocale(i18n.language);
   const { profile } = useAuth();
   const supabase = getSupabase();
 
@@ -379,21 +383,22 @@ export default function AvailabilityTab() {
 
   const formatDateDisplay = (dateStr: string) => {
     if (!dateStr) return "";
-    return formatVietnamDate(dateStr, { weekday: "short", month: "short", day: "numeric", year: "numeric" }, "en-US");
+    return formatVietnamDate(dateStr, { weekday: "short", month: "short", day: "numeric", year: "numeric" }, dateLocale);
   };
 
   const formatDuration = (mins: number) => {
-    if (mins === 30) return "30 min";
-    if (mins === 60) return "1 hr";
-    if (mins === 90) return "1.5 hr";
+    if (mins === 30) return t("teacher.availability30min");
+    if (mins === 60) return t("teacher.availability1hr");
+    if (mins === 90) return t("teacher.availability15hr");
     return `${mins} min`;
   };
 
+  const monthKeys = AVAILABILITY_MONTH_KEYS;
+
   const weekLabel = useMemo(() => {
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const formatShort = (d: Date) => `${months[d.getMonth()]} ${d.getDate()}`;
+    const formatShort = (d: Date) => `${t(`booking.months.${monthKeys[d.getMonth()]}`)} ${d.getDate()}`;
     return `${formatShort(nextWeek.monday)} – ${formatShort(nextWeek.sunday)}, ${nextWeek.monday.getFullYear()}`;
-  }, [nextWeek]);
+  }, [nextWeek, t, monthKeys]);
 
   if (loading) {
     return (
@@ -480,9 +485,9 @@ export default function AvailabilityTab() {
                 className="text-sm rounded-md border border-background-200 bg-background-50 px-2 py-1.5 text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-300 cursor-pointer"
                 id="new-slot-duration"
               >
-                <option value={30}>30 min</option>
-                <option value={60}>1 hr</option>
-                <option value={90}>1.5 hr</option>
+                <option value={30}>{t("teacher.availability30min")}</option>
+                <option value={60}>{t("teacher.availability1hr")}</option>
+                <option value={90}>{t("teacher.availability15hr")}</option>
               </select>
             </div>
             <button
@@ -587,9 +592,9 @@ export default function AvailabilityTab() {
                       onChange={(e) => handleUpdateSlot(idx, "duration_minutes", parseInt(e.target.value))}
                       className="text-sm rounded-md border border-background-200 bg-background-50 px-2 py-1.5 text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-300 cursor-pointer"
                     >
-                      <option value={30}>30 min</option>
-                      <option value={60}>1 hr</option>
-                      <option value={90}>1.5 hr</option>
+                      <option value={30}>{t("teacher.availability30min")}</option>
+                      <option value={60}>{t("teacher.availability1hr")}</option>
+                      <option value={90}>{t("teacher.availability15hr")}</option>
                     </select>
 
                     <span className="text-xs text-foreground-400 whitespace-nowrap">

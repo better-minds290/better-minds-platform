@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
-import { formatVietnamDate } from "@/lib/datetime";
+import { formatVietnamDate, getUiDateLocale } from "@/lib/datetime";
 
 import AttendanceModal from "./AttendanceModal";
 import ClassDetailPanel from "./ClassDetailPanel";
@@ -53,7 +53,8 @@ interface SprintSessionData {
 }
 
 export default function ScheduleTab({ todayStr }: ScheduleTabProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const dateLocale = getUiDateLocale(i18n.language);
   const { profile } = useAuth();
   const [filter, setFilter] = useState<FilterType>("upcoming");
   const [classes, setClasses] = useState<ClassData[]>([]);
@@ -194,7 +195,7 @@ export default function ScheduleTab({ todayStr }: ScheduleTabProps) {
   }, [displayClasses, displaySchedules, displayEnrollments, displaySprintSessions, filter, todayStr]);
 
   const formatDate = (dateStr: string) => {
-    return formatVietnamDate(dateStr, { weekday: "short", month: "short", day: "numeric", year: "numeric" }, "en-US");
+    return formatVietnamDate(dateStr, { weekday: "short", month: "short", day: "numeric", year: "numeric" }, dateLocale);
   };
 
   const formatTimeShort = (time: string) => {
@@ -409,7 +410,7 @@ export default function ScheduleTab({ todayStr }: ScheduleTabProps) {
                         {cls.studentCount === 0 && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-secondary-100 text-secondary-700 whitespace-nowrap">
                             <i className="ri-user-unfollow-line"></i>
-                            Trống
+                            {t("teacher.scheduleEmpty")}
                           </span>
                         )}
                         <span className="flex items-center gap-1">
@@ -455,7 +456,7 @@ export default function ScheduleTab({ todayStr }: ScheduleTabProps) {
                                 </span>
                                 {isTodayCell && !isTrulyComplete && (
                                   <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-primary-500 text-background-50 whitespace-nowrap">
-                                    Today
+                                    {t("teacher.filterToday")}
                                   </span>
                                 )}
                                 {isTrulyComplete && (
@@ -500,7 +501,7 @@ export default function ScheduleTab({ todayStr }: ScheduleTabProps) {
                             );
                           })}
                           {cls.filteredScheds.length > 3 && (
-                            <p className="text-[10px] text-foreground-400 pl-4">+{cls.filteredScheds.length - 3} more lessons</p>
+                            <p className="text-[10px] text-foreground-400 pl-4">{t("teacher.scheduleMoreLessons", { count: cls.filteredScheds.length - 3 })}</p>
                           )}
                         </div>
                       )}
@@ -536,7 +537,7 @@ export default function ScheduleTab({ todayStr }: ScheduleTabProps) {
           classId={attendanceTarget.class_id}
           scheduleDate={attendanceTarget.date}
           scheduleTime={`${attendanceTarget.start_time} - ${attendanceTarget.end_time}`}
-          className={displayClasses.find((c) => c.id === attendanceTarget.class_id)?.name || "Unknown"}
+          className={displayClasses.find((c) => c.id === attendanceTarget.class_id)?.name || t("teacher.unknownName")}
           onClose={() => {
             setAttendanceTarget(null);
             fetchData();
