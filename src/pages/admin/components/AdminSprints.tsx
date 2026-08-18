@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import { selectCurrentAdminSprint } from "@/lib/adminSprintSelection";
 import { formatVietnamDate, formatVietnamDateTime } from "@/lib/datetime";
 
 interface LearnerSprint {
@@ -155,14 +156,20 @@ export default function AdminSprints() {
         sprintByEnrollment.set(s.enrollment_id, arr);
       });
 
-      const activeSprintIds = (allSprints || []).filter((s) => s.status === "active" || s.status === "expired").map((s) => s.id);
+      const currentSprintIds = enrollments
+        .map((enr) => {
+          const sprints = sprintByEnrollment.get(enr.id) || [];
+          return selectCurrentAdminSprint(sprints)?.id || null;
+        })
+        .filter((id): id is string => !!id);
+
       let sessionsBySprint = new Map<string, Array<{ id: string; sessionNumber: number; sessionType: string; status: string; completedAt: string | null }>>();
 
-      if (activeSprintIds.length > 0) {
+      if (currentSprintIds.length > 0) {
         const { data: sessions } = await supabase
           .from("sprint_sessions")
           .select("id, sprint_id, session_number, session_type, status, completed_at")
-          .in("sprint_id", activeSprintIds)
+          .in("sprint_id", currentSprintIds)
           .order("session_number", { ascending: true });
 
         (sessions || []).forEach((s) => {
@@ -175,10 +182,10 @@ export default function AdminSprints() {
       const result: LearnerSprint[] = enrollments.map((enr) => {
         const profile = profileMap.get(enr.learner_id) || { full_name: "Unknown", email: "" };
         const sprints = sprintByEnrollment.get(enr.id) || [];
-        const activeSprint = sprints.find((s) => s.status === "active" || s.status === "expired") || sprints[0] || null;
+        const currentSprint = selectCurrentAdminSprint(sprints);
         const courseName = courseMap.get(enr.course_id) || "-";
 
-        const sessions = activeSprint ? (sessionsBySprint.get(activeSprint.id) || []) : [];
+        const sessions = currentSprint ? (sessionsBySprint.get(currentSprint.id) || []) : [];
         const completedCount = sessions.filter((s) => s.status === "completed").length;
 
         return {
@@ -188,14 +195,14 @@ export default function AdminSprints() {
           enrollmentId: enr.id,
           enrollmentStatus: enr.status === "paused" ? "active" : (enr.status || "active"),
           courseName,
-          currentSprintId: activeSprint?.id || null,
-          sprintNumber: activeSprint?.sprint_number || null,
-          sprintStatus: activeSprint?.status || null,
-          deadlineS1: activeSprint?.deadline_session1 || null,
-          deadlineS2: activeSprint?.deadline_session2 || null,
-          deadlineS3: activeSprint?.deadline_session3 || null,
-          sprintCreatedAt: activeSprint?.created_at || null,
-          sprintCompletedAt: activeSprint?.completed_at || null,
+          currentSprintId: currentSprint?.id || null,
+          sprintNumber: currentSprint?.sprint_number || null,
+          sprintStatus: currentSprint?.status || null,
+          deadlineS1: currentSprint?.deadline_session1 || null,
+          deadlineS2: currentSprint?.deadline_session2 || null,
+          deadlineS3: currentSprint?.deadline_session3 || null,
+          sprintCreatedAt: currentSprint?.created_at || null,
+          sprintCompletedAt: currentSprint?.completed_at || null,
           sessions,
           completedCount,
         };

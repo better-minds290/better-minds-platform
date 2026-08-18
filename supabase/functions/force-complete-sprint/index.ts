@@ -80,23 +80,126 @@ serve(async (req: Request) => {
 
     const now = new Date().toISOString();
 
-    // 1. Mark all non-absent sessions as completed (skip "absent" to preserve learner absence status)
-    const { error: sessionErr } = await supabase
-      .from("sprint_sessions")
-      .update({
-        status: "completed",
-        completed_at: now,
-      })
-      .eq("sprint_id", sprint_id)
-      .neq("status", "completed")
-      .neq("status", "absent");
+    const { data: enrollment } = await supabase
+      .from("enrollments")
+      .select("learner_id, course_id")
+      .eq("id", sprint.enrollment_id)
+      .maybeSingle();
 
-    if (sessionErr) {
-      console.error("Session update error:", sessionErr);
-      return new Response(JSON.stringify({ success: false, error: "Failed to update sessions" }), {
+    const learnerId = enrollment?.learner_id || null;
+
+    const { data: sprintSessions, error: sessionsFetchErr } = await supabase
+      .from("sprint_sessions")
+      .select("id, class_id, status")
+      .eq("sprint_id", sprint_id);
+
+    if (sessionsFetchErr) {
+      console.error("Session fetch error:", sessionsFetchErr);
+      return new Response(JSON.stringify({ success: false, error: "Failed to load sprint sessions" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    const sessionsToComplete = (sprintSessions || []).filter(
+      (s) => s.status !== "completed" && s.status !== "absent"
+    );
+
+    // Release booked-class links for this learner only (preserve shared classes for others).
+    if (learnerId) {
+      const touchedClassIds = new Set<string>();
+
+      for (const session of sessionsToComplete) {
+        if (!session.class_id) continue;
+        const classId = session.class_id;
+        touchedClassIds.add(classId);
+
+        await supabase
+          .from("class_enrollments")
+          .delete()
+          .eq("class_id", classId)
+          .eq("student_id", learnerId);
+
+        const { data: schedule } = await supabase
+          .from("class_schedules")
+          .select("id, status")
+          .eq("class_id", classId)
+          .maybeSingle();
+
+        if (schedule?.id) {
+          await supabase
+            .from("session_attendance")
+            .delete()
+            .eq("schedule_id", schedule.id)
+            .eq("student_id", learnerId);
+        }
+      }
+
+      for (const classId of touchedClassIds) {
+        const { count: remainingCount } = await supabase
+          .from("class_enrollments")
+          .select("id", { count: "exact", head: true })
+          .eq("class_id", classId);
+
+        const { data: schedule } = await supabase
+          .from("class_schedules")
+          .select("id, status")
+          .eq("class_id", classId)
+          .maybeSingle();
+
+        const shouldDeleteEmptyUpcoming =
+          (remainingCount ?? 0) === 0 && schedule?.status !== "completed";
+
+        if (shouldDeleteEmptyUpcoming) {
+          // Other learners' sessions should not remain booked against a deleted shell.
+          await supabase
+            .from("sprint_sessions")
+            .update({
+              status: "available",
+              class_id: null,
+              meeting_link: null,
+              scheduled_at: null,
+              teacher_id: null,
+            })
+            .eq("class_id", classId)
+            .neq("status", "completed")
+            .neq("status", "absent");
+
+          await supabase.from("class_schedules").delete().eq("class_id", classId);
+          await supabase.from("class_materials").delete().eq("class_id", classId);
+          await supabase.from("classes").delete().eq("id", classId);
+        }
+      }
+    }
+
+    // Mark eligible sessions completed; unlink booking fields when they had a class.
+    for (const session of sessionsToComplete) {
+      const updatePayload = session.class_id
+        ? {
+            status: "completed",
+            completed_at: now,
+            class_id: null,
+            teacher_id: null,
+            scheduled_at: null,
+            meeting_link: null,
+          }
+        : {
+            status: "completed",
+            completed_at: now,
+          };
+
+      const { error: sessionUpdateErr } = await supabase
+        .from("sprint_sessions")
+        .update(updatePayload)
+        .eq("id", session.id);
+
+      if (sessionUpdateErr) {
+        console.error("Session update error:", sessionUpdateErr);
+        return new Response(JSON.stringify({ success: false, error: "Failed to update sessions" }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
     // 2. Mark sprint as completed
@@ -123,14 +226,7 @@ serve(async (req: Request) => {
       console.error("Enrollment reset error:", enrollErr);
     }
 
-    // 4. Get enrollment info
-    const { data: enrollment } = await supabase
-      .from("enrollments")
-      .select("learner_id, course_id")
-      .eq("id", sprint.enrollment_id)
-      .maybeSingle();
-
-    // 5. Check course completion & generate next sprint
+    // 4. Check course completion & generate next sprint (enrollment loaded above)
     let courseCompleted = false;
     let nextSprintGenerated = false;
     let nextSprintNumber: number | null = null;
