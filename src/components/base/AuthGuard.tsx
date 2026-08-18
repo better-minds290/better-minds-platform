@@ -2,6 +2,13 @@ import { useEffect } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
+import {
+  shouldRedirectToLogin,
+  shouldShowAccessRestricted,
+  shouldShowAuthLoading,
+  shouldShowDeactivated,
+  type AuthGuardInput,
+} from "@/lib/authLogic";
 import i18n from "@/i18n";
 
 interface AuthGuardProps {
@@ -10,7 +17,7 @@ interface AuthGuardProps {
 }
 
 export default function AuthGuard({ children, allowedRoles }: AuthGuardProps) {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, initialized, profileLoading } = useAuth();
   const { t } = useTranslation();
   const location = useLocation();
 
@@ -20,7 +27,15 @@ export default function AuthGuard({ children, allowedRoles }: AuthGuardProps) {
     }
   }, [profile]);
 
-  if (loading) {
+  const guardInput: AuthGuardInput = {
+    initialized,
+    user,
+    profile,
+    profileLoading,
+    allowedRoles,
+  };
+
+  if (shouldShowAuthLoading(guardInput)) {
     return (
       <div className="min-h-screen bg-background-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
@@ -31,12 +46,11 @@ export default function AuthGuard({ children, allowedRoles }: AuthGuardProps) {
     );
   }
 
-  if (!user) {
+  if (shouldRedirectToLogin(guardInput)) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // Block deactivated users
-  if (profile && profile.is_active === false) {
+  if (shouldShowDeactivated(guardInput)) {
     return (
       <div className="min-h-screen bg-background-50 flex items-center justify-center">
         <div className="text-center max-w-md px-6">
@@ -64,7 +78,7 @@ export default function AuthGuard({ children, allowedRoles }: AuthGuardProps) {
     );
   }
 
-  if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {
+  if (shouldShowAccessRestricted(guardInput)) {
     return (
       <div className="min-h-screen bg-background-50 flex items-center justify-center">
         <div className="text-center max-w-md px-6">

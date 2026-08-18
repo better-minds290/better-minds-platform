@@ -1,24 +1,11 @@
 import { useState, useEffect, useRef, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { useAuth, type Profile } from "@/hooks/useAuth";
+import { useAuth } from "@/hooks/useAuth";
+import { getRedirectPath } from "@/lib/authLogic";
 import i18n from "@/i18n";
 
 type SelectedRole = "learner" | "teacher" | null;
-
-function getRedirectPath(role: Profile["role"]): string {
-  switch (role) {
-    case "learner":
-      return "/dashboard";
-    case "vietnamese_teacher":
-    case "foreign_teacher":
-      return "/teacher/dashboard";
-    case "admin":
-      return "/admin/dashboard";
-    default:
-      return "/dashboard";
-  }
-}
 
 export default function Login() {
   const { t } = useTranslation();
