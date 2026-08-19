@@ -13,6 +13,7 @@ import {
   shouldApplySessionUser,
   shouldClearAuthOnEvent,
   shouldIgnoreAuthEvent,
+  shouldSilentlyRefreshSessionUser,
 } from "@/lib/authLogic";
 
 export interface Profile {
@@ -106,6 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const mountedRef = useRef(true);
   const profileRequestRef = useRef(0);
   const activeUserIdRef = useRef<string | null>(null);
+  const profileRef = useRef<Profile | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -113,6 +115,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
 
   useEffect(() => {
     let cancelled = false;
@@ -286,7 +292,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (shouldApplySessionUser(event, session) && session?.user) {
-        void applyAuthenticatedUser(supabase, session.user);
+        const nextUser = session.user;
+        const hasLoadedProfile =
+          profileRef.current !== null && activeUserIdRef.current === nextUser.id;
+
+        if (
+          shouldSilentlyRefreshSessionUser({
+            event,
+            currentUserId: activeUserIdRef.current,
+            nextUserId: nextUser.id,
+            hasLoadedProfile,
+          })
+        ) {
+          activeUserIdRef.current = nextUser.id;
+          if (mountedRef.current) {
+            setUser(nextUser);
+          }
+          return;
+        }
+
+        void applyAuthenticatedUser(supabase, nextUser);
       }
     });
 

@@ -59,10 +59,35 @@ export function shouldShowAuthLoading(input: AuthGuardInput): boolean {
   if (!input.initialized) {
     return true;
   }
-  if (input.user && input.allowedRoles?.length && input.profileLoading) {
+  // Block role-protected routes only until the first profile is available.
+  // Background profile refresh must not unmount protected content.
+  if (input.user && input.allowedRoles?.length && input.profileLoading && !input.profile) {
     return true;
   }
   return false;
+}
+
+/** Same-user JWT refresh with an already-loaded profile — keep UI mounted, skip profile fetch. */
+export function shouldSilentlyRefreshSessionUser(input: {
+  event: string;
+  currentUserId: string | null;
+  nextUserId: string;
+  hasLoadedProfile: boolean;
+}): boolean {
+  return (
+    input.event === "TOKEN_REFRESHED" &&
+    input.currentUserId === input.nextUserId &&
+    input.hasLoadedProfile
+  );
+}
+
+export function shouldRefetchProfileForAuthEvent(input: {
+  event: string;
+  currentUserId: string | null;
+  nextUserId: string;
+  hasLoadedProfile: boolean;
+}): boolean {
+  return !shouldSilentlyRefreshSessionUser(input);
 }
 
 export function shouldRedirectToLogin(input: AuthGuardInput): boolean {
