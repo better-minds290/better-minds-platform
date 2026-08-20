@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { calendarDateToLocalDate, toLocalDateStr } from "./datetime";
 
 const PAGE_SIZE = 1000;
 const TAUGHT_STATUSES = new Set(["completed", "absent"]);
@@ -332,4 +333,241 @@ export function summarizeWeeklyBookedTeaching(
     classCount: weekUnits.length,
     totalHours: Math.round(totalHours * 10) / 10,
   };
+}
+
+export interface TeacherAvailabilityRow {
+  teacher_id: string;
+  date: string | null;
+  day_of_week?: number | null;
+  start_time: string | null;
+  end_time: string | null;
+  is_active?: boolean | null;
+}
+
+export interface TeacherUnavailableDateRow {
+  teacher_id: string;
+  date: string;
+}
+
+export interface TeacherWeeklyClassStats {
+  classesThisWeek: number;
+  completedClassesThisWeek: number;
+}
+
+/** Sum registered availability hours for one teacher in a calendar week (recurring patterns). */
+export function summarizeWeeklyAvailabilityHours(
+  patterns: TeacherAvailabilityRow[],
+  teacherId: string,
+  range: DateRangeYmd,
+  unavailableDates: TeacherUnavailableDateRow[] = []
+): number {
+  return (
+    summarizeWeeklyAvailabilityHoursByTeacher(patterns, [teacherId], range, unavailableDates).get(
+      teacherId
+    ) || 0
+  );
+}
+
+/** Taught teaching units for one teacher inside a calendar week. */
+export function taughtUnitsInDateRange(
+  units: TeachingSessionUnit[],
+  teacherId: string,
+  range: DateRangeYmd
+): TeachingSessionUnit[] {
+  return units.filter(
+    (unit) => unit.teacherId === teacherId && unit.taught && isDateInRangeYmd(unit.date, range)
+  );
+}
+
+export function summarizeWeeklyTaughtClasses(
+  units: TeachingSessionUnit[],
+  teacherId: string,
+  range: DateRangeYmd
+): number {
+  return taughtUnitsInDateRange(units, teacherId, range).length;
+}
+
+/** Batch weekly class stats for many teachers in one pass. */
+export function summarizeWeeklyClassStatsByTeacher(
+  units: TeachingSessionUnit[],
+  teacherIds: string[],
+  range: DateRangeYmd
+): Map<string, TeacherWeeklyClassStats> {
+  const stats = new Map<string, TeacherWeeklyClassStats>();
+  teacherIds.forEach((id) => {
+    stats.set(id, { classesThisWeek: 0, completedClassesThisWeek: 0 });
+  });
+  units.forEach((unit) => {
+    if (!unit.booked || !isDateInRangeYmd(unit.date, range)) return;
+    const entry = stats.get(unit.teacherId);
+    if (!entry) return;
+    entry.classesThisWeek += 1;
+    if (unit.taught) entry.completedClassesThisWeek += 1;
+  });
+  return stats;
+}
+
+function patternDayOfWeek(pattern: TeacherAvailabilityRow): number | null {
+  if (pattern.day_of_week !== null && pattern.day_of_week !== undefined) {
+    return pattern.day_of_week;
+  }
+  if (pattern.date) return calendarDateToLocalDate(pattern.date).getDay();
+  return null;
+}
+
+function weekDayDates(range: DateRangeYmd): { date: string; dayOfWeek: number }[] {
+  const start = calendarDateToLocalDate(range.start);
+  const days: { date: string; dayOfWeek: number }[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    days.push({ date: toLocalDateStr(d), dayOfWeek: d.getDay() });
+  }
+  return days;
+}
+
+export function weeklyAvailabilityOccurrenceKey(
+  teacherId: string,
+  date: string,
+  startTime: string | null,
+  endTime: string | null
+): string {
+  return `${teacherId}|${date}|${normalizeClockTime(startTime)}|${normalizeClockTime(endTime)}`;
+}
+
+export function buildUnavailableDateSet(rows: TeacherUnavailableDateRow[]): Set<string> {
+  const set = new Set<string>();
+  rows.forEach((row) => {
+    if (row.teacher_id && row.date) set.add(`${row.teacher_id}|${row.date}`);
+  });
+  return set;
+}
+
+/**
+ * Expand active recurring availability patterns onto concrete current-week occurrences.
+ * Anchor `date` is ignored; `day_of_week` drives which weekday in the range gets a slot.
+ */
+export function expandWeeklyAvailabilityOccurrences(
+  patterns: TeacherAvailabilityRow[],
+  range: DateRangeYmd,
+  unavailableDates: TeacherUnavailableDateRow[] = []
+): Map<string, number> {
+  const unavailable = buildUnavailableDateSet(unavailableDates);
+  const weekDays = weekDayDates(range);
+  const dowToDate = new Map<number, string>();
+  weekDays.forEach((day) => dowToDate.set(day.dayOfWeek, day.date));
+
+  const seenKeys = new Set<string>();
+  const hoursByTeacher = new Map<string, number>();
+
+  patterns.forEach((pattern) => {
+    if (!pattern.teacher_id || pattern.is_active === false) return;
+    if (!pattern.start_time || !pattern.end_time) return;
+
+    const dow = patternDayOfWeek(pattern);
+    if (dow === null) return;
+
+    const occurrenceDate = dowToDate.get(dow);
+    if (!occurrenceDate) return;
+    if (unavailable.has(`${pattern.teacher_id}|${occurrenceDate}`)) return;
+
+    const key = weeklyAvailabilityOccurrenceKey(
+      pattern.teacher_id,
+      occurrenceDate,
+      pattern.start_time,
+      pattern.end_time
+    );
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+
+    const slotHours = durationHoursFromTimes(pattern.start_time, pattern.end_time);
+    const prev = hoursByTeacher.get(pattern.teacher_id) || 0;
+    hoursByTeacher.set(
+      pattern.teacher_id,
+      Math.round((prev + slotHours) * 10) / 10
+    );
+  });
+
+  return hoursByTeacher;
+}
+
+/** Batch weekly availability hours for many teachers in one pass (recurring patterns). */
+export function summarizeWeeklyAvailabilityHoursByTeacher(
+  patterns: TeacherAvailabilityRow[],
+  teacherIds: string[],
+  range: DateRangeYmd,
+  unavailableDates: TeacherUnavailableDateRow[] = []
+): Map<string, number> {
+  const expanded = expandWeeklyAvailabilityOccurrences(patterns, range, unavailableDates);
+  const hours = new Map<string, number>();
+  teacherIds.forEach((id) => hours.set(id, expanded.get(id) || 0));
+  return hours;
+}
+
+export function formatDecimalHours(hours: number): string {
+  const rounded = Math.round(hours * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+}
+
+/** Current-week schedules + linked sessions/classes only (fixed small query count). */
+export async function fetchTeacherWeeklyWorkloadSource(
+  supabase: SupabaseClient,
+  range: DateRangeYmd
+): Promise<TeacherWorkloadSource> {
+  const schedules = await fetchPaginated<ClassScheduleRow>(
+    supabase,
+    "class_schedules",
+    "id, class_id, teacher_id, date, start_time, end_time, status",
+    (q) => q.gte("date", range.start).lte("date", range.end)
+  );
+
+  const classIds = [...new Set(schedules.map((s) => s.class_id).filter(Boolean))] as string[];
+
+  const [sessions, classes] = await Promise.all([
+    classIds.length > 0
+      ? fetchPaginated<LiveSprintSessionRow>(
+          supabase,
+          "sprint_sessions",
+          "id, class_id, teacher_id, status, session_number, session_type",
+          (q) => q.in("class_id", classIds).neq("session_number", 1)
+        )
+      : Promise.resolve([]),
+    classIds.length > 0
+      ? fetchPaginated<ClassDurationRow>(
+          supabase,
+          "classes",
+          "id, teacher_id, duration_minutes",
+          (q) => q.in("id", classIds)
+        )
+      : Promise.resolve([]),
+  ]);
+
+  return { schedules, sessions, classes };
+}
+
+export async function fetchTeacherAvailabilityPatterns(
+  supabase: SupabaseClient,
+  teacherIds: string[]
+): Promise<TeacherAvailabilityRow[]> {
+  if (teacherIds.length === 0) return [];
+  return fetchPaginated<TeacherAvailabilityRow>(
+    supabase,
+    "teacher_availability",
+    "teacher_id, date, day_of_week, start_time, end_time, is_active",
+    (q) => q.eq("is_active", true).in("teacher_id", teacherIds)
+  );
+}
+
+export async function fetchTeacherUnavailableDatesForWeek(
+  supabase: SupabaseClient,
+  teacherIds: string[],
+  range: DateRangeYmd
+): Promise<TeacherUnavailableDateRow[]> {
+  if (teacherIds.length === 0) return [];
+  return fetchPaginated<TeacherUnavailableDateRow>(
+    supabase,
+    "teacher_unavailable_dates",
+    "teacher_id, date",
+    (q) => q.in("teacher_id", teacherIds).gte("date", range.start).lte("date", range.end)
+  );
 }

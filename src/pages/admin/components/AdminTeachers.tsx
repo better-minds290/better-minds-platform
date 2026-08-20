@@ -1,6 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import { getCurrentWeekRangeYmd } from "@/lib/datetime";
+import {
+  buildTeachingSessionUnits,
+  fetchTeacherAvailabilityPatterns,
+  fetchTeacherUnavailableDatesForWeek,
+  fetchTeacherWeeklyWorkloadSource,
+  formatDecimalHours,
+  summarizeWeeklyAvailabilityHoursByTeacher,
+  summarizeWeeklyClassStatsByTeacher,
+} from "@/lib/teacherHours";
 
 interface TeacherData {
   id: string;
@@ -9,9 +19,9 @@ interface TeacherData {
   phone: string;
   role: string;
   created_at: string;
-  sessionsAssigned: number;
-  sessionsCompleted: number;
-  studentsCount: number;
+  availabilityHoursThisWeek: number;
+  classesThisWeek: number;
+  completedClassesThisWeek: number;
   is_active: boolean;
 }
 
@@ -47,45 +57,41 @@ export default function AdminTeachers() {
 
     try {
       const supabase = getSupabase();
+      const weekRange = getCurrentWeekRangeYmd();
 
-      const [profilesRes, sessionsRes] = await Promise.all([
-        supabase.from("profiles").select("*").in("role", ["vietnamese_teacher", "foreign_teacher"]).order("created_at", { ascending: false }),
-        supabase.from("sprint_sessions").select("id, teacher_id, status, sprint_id"),
-      ]);
+      const profilesRes = await supabase
+        .from("profiles")
+        .select("*")
+        .in("role", ["vietnamese_teacher", "foreign_teacher"])
+        .order("created_at", { ascending: false });
 
       if (profilesRes.error || !profilesRes.data || profilesRes.data.length === 0) {
         setTeachers([]);
         return;
       }
 
-      const allSessions = sessionsRes.data || [];
+      const teacherIds = profilesRes.data.map((p) => p.id);
 
-      // Fetch unique learners per sprint for each teacher
-      const sprintIdsWithTeachers = [...new Set(allSessions.filter((s) => s.teacher_id).map((s) => s.sprint_id))];
-      let sprintEnrollmentMap = new Map<string, string[]>();
-      if (sprintIdsWithTeachers.length > 0) {
-        const { data: sprints } = await supabase
-          .from("learning_sprints")
-          .select("id, enrollment_id")
-          .in("id", sprintIdsWithTeachers);
-        (sprints || []).forEach((s) => {
-          const arr = sprintEnrollmentMap.get(s.id) || [];
-          arr.push(s.enrollment_id);
-          sprintEnrollmentMap.set(s.id, arr);
-        });
-      }
+      const [workloadSource, availabilityPatterns, unavailableDates] = await Promise.all([
+        fetchTeacherWeeklyWorkloadSource(supabase, weekRange),
+        fetchTeacherAvailabilityPatterns(supabase, teacherIds),
+        fetchTeacherUnavailableDatesForWeek(supabase, teacherIds, weekRange),
+      ]);
+
+      const units = buildTeachingSessionUnits(workloadSource);
+      const availabilityByTeacher = summarizeWeeklyAvailabilityHoursByTeacher(
+        availabilityPatterns,
+        teacherIds,
+        weekRange,
+        unavailableDates
+      );
+      const classStatsByTeacher = summarizeWeeklyClassStatsByTeacher(units, teacherIds, weekRange);
 
       const merged: TeacherData[] = profilesRes.data.map((p) => {
-        const teacherSessions = allSessions.filter((s) => s.teacher_id === p.id);
-        const sessionsAssigned = teacherSessions.length;
-        const sessionsCompleted = teacherSessions.filter((s) => s.status === "completed").length;
-
-        // Count unique learners across all sprints this teacher is assigned to
-        const uniqueLearners = new Set<string>();
-        teacherSessions.forEach((s) => {
-          const enrollmentIds = sprintEnrollmentMap.get(s.sprint_id) || [];
-          enrollmentIds.forEach((eid) => uniqueLearners.add(eid));
-        });
+        const classStats = classStatsByTeacher.get(p.id) || {
+          classesThisWeek: 0,
+          completedClassesThisWeek: 0,
+        };
 
         return {
           id: p.id,
@@ -94,9 +100,9 @@ export default function AdminTeachers() {
           phone: p.phone || "",
           role: p.role || "vietnamese_teacher",
           created_at: p.created_at || "",
-          sessionsAssigned,
-          sessionsCompleted,
-          studentsCount: uniqueLearners.size,
+          availabilityHoursThisWeek: availabilityByTeacher.get(p.id) || 0,
+          classesThisWeek: classStats.classesThisWeek,
+          completedClassesThisWeek: classStats.completedClassesThisWeek,
           is_active: p.is_active !== false,
         };
       });
@@ -408,13 +414,13 @@ export default function AdminTeachers() {
                   {t("auth.adminRole")}
                 </th>
                 <th className="text-center px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider">
-                  Sessions
+                  {t("auth.adminAvailabilityHoursThisWeek")}
                 </th>
                 <th className="text-center px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider">
-                  Completed
+                  {t("auth.adminClassesThisWeek")}
                 </th>
                 <th className="text-center px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider">
-                  {t("auth.adminStudents")}
+                  {t("auth.adminCompletedClassesThisWeek")}
                 </th>
                 <th className="text-center px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider">
                   {t("auth.adminActions")}
@@ -444,16 +450,15 @@ export default function AdminTeachers() {
                       {t(teacher.role === "foreign_teacher" ? "dashboard.roleForeignTeacher" : "dashboard.roleVNTeacher")}
                     </span>
                   </td>
-                  <td className="px-5 py-3.5 text-center text-foreground-900 font-medium">{teacher.sessionsAssigned}</td>
-                  <td className="px-5 py-3.5 text-center">
-                    <span className="text-foreground-900 font-medium">{teacher.sessionsCompleted}</span>
-                    {teacher.sessionsAssigned > 0 && (
-                      <span className="text-xs text-foreground-400 ml-1">
-                        ({Math.round((teacher.sessionsCompleted / teacher.sessionsAssigned) * 100)}%)
-                      </span>
-                    )}
+                  <td className="px-5 py-3.5 text-center text-foreground-900 font-medium">
+                    {formatDecimalHours(teacher.availabilityHoursThisWeek)}
                   </td>
-                  <td className="px-5 py-3.5 text-center text-foreground-900 font-medium">{teacher.studentsCount}</td>
+                  <td className="px-5 py-3.5 text-center text-foreground-900 font-medium">
+                    {teacher.classesThisWeek}
+                  </td>
+                  <td className="px-5 py-3.5 text-center text-foreground-900 font-medium">
+                    {teacher.completedClassesThisWeek}
+                  </td>
                   <td className="px-5 py-3.5 text-center">
                     <div className="flex items-center justify-center gap-2">
                       <button

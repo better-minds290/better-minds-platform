@@ -2,12 +2,20 @@ import {
   buildBookedAvailabilityKeys,
   buildTeachingSessionUnits,
   durationHoursFromTimes,
+  expandWeeklyAvailabilityOccurrences,
   filterUnbookedAvailabilitySlots,
+  formatDecimalHours,
   formatTeachingHours,
   honorDateRangeYmd,
   summarizeTeacherHours,
+  summarizeWeeklyAvailabilityHours,
+  summarizeWeeklyAvailabilityHoursByTeacher,
   summarizeWeeklyBookedTeaching,
+  summarizeWeeklyClassStatsByTeacher,
+  summarizeWeeklyTaughtClasses,
   taughtUnitsInHonorPeriod,
+  type TeacherAvailabilityRow,
+  type TeacherUnavailableDateRow,
   type TeacherWorkloadSource,
 } from "./teacherHours";
 
@@ -413,6 +421,375 @@ assertEqual(formatTeachingHours(1.5, "giờ"), "1.5 giờ", "decimal hours not r
     ["avail-2"],
     "availability: hide booked slot only"
   );
+}
+
+// Admin weekly availability: Mon 2h + Wed 2h + Fri 1.5h = 5.5h
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const patterns: TeacherAvailabilityRow[] = [
+    { teacher_id: "teacher-a", date: "2026-08-17", day_of_week: 1, start_time: "08:00:00", end_time: "10:00:00", is_active: true },
+    { teacher_id: "teacher-a", date: "2026-08-19", day_of_week: 3, start_time: "18:00:00", end_time: "20:00:00", is_active: true },
+    { teacher_id: "teacher-a", date: "2026-08-21", day_of_week: 5, start_time: "08:30:00", end_time: "10:00:00", is_active: true },
+  ];
+  assertEqual(
+    summarizeWeeklyAvailabilityHours(patterns, "teacher-a", week),
+    5.5,
+    "recurring availability: Mon+Wed+Fri = 5.5h"
+  );
+  assertEqual(
+    summarizeWeeklyAvailabilityHoursByTeacher(patterns, ["teacher-a"], week).get("teacher-a"),
+    5.5,
+    "recurring availability batch: 5.5h"
+  );
+  assertEqual(formatDecimalHours(5.5), "5.5", "recurring availability: decimal preserved");
+}
+
+// Anchor dates last week → still 5.5h current week
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const patterns: TeacherAvailabilityRow[] = [
+    { teacher_id: "teacher-a", date: "2026-08-10", day_of_week: 1, start_time: "08:00:00", end_time: "10:00:00", is_active: true },
+    { teacher_id: "teacher-a", date: "2026-08-12", day_of_week: 3, start_time: "18:00:00", end_time: "20:00:00", is_active: true },
+    { teacher_id: "teacher-a", date: "2026-08-14", day_of_week: 5, start_time: "08:30:00", end_time: "10:00:00", is_active: true },
+  ];
+  assertEqual(
+    summarizeWeeklyAvailabilityHours(patterns, "teacher-a", week),
+    5.5,
+    "recurring availability: last-week anchors still 5.5h"
+  );
+}
+
+// Anchor dates next week → still 5.5h current week
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const patterns: TeacherAvailabilityRow[] = [
+    { teacher_id: "teacher-a", date: "2026-08-24", day_of_week: 1, start_time: "08:00:00", end_time: "10:00:00", is_active: true },
+    { teacher_id: "teacher-a", date: "2026-08-26", day_of_week: 3, start_time: "18:00:00", end_time: "20:00:00", is_active: true },
+    { teacher_id: "teacher-a", date: "2026-08-28", day_of_week: 5, start_time: "08:30:00", end_time: "10:00:00", is_active: true },
+  ];
+  assertEqual(
+    summarizeWeeklyAvailabilityHours(patterns, "teacher-a", week),
+    5.5,
+    "recurring availability: next-week anchors still 5.5h"
+  );
+}
+
+// Wednesday unavailable → 3.5h
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const patterns: TeacherAvailabilityRow[] = [
+    { teacher_id: "teacher-a", date: "2026-08-24", day_of_week: 1, start_time: "08:00:00", end_time: "10:00:00", is_active: true },
+    { teacher_id: "teacher-a", date: "2026-08-26", day_of_week: 3, start_time: "18:00:00", end_time: "20:00:00", is_active: true },
+    { teacher_id: "teacher-a", date: "2026-08-28", day_of_week: 5, start_time: "08:30:00", end_time: "10:00:00", is_active: true },
+  ];
+  const unavailable: TeacherUnavailableDateRow[] = [
+    { teacher_id: "teacher-a", date: "2026-08-19" },
+  ];
+  assertEqual(
+    summarizeWeeklyAvailabilityHours(patterns, "teacher-a", week, unavailable),
+    3.5,
+    "recurring availability: Wed unavailable → 3.5h"
+  );
+}
+
+// Booked slot still counts (booked status does not affect availability hours sum)
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const patterns: TeacherAvailabilityRow[] = [
+    { teacher_id: "teacher-a", date: "2026-08-24", day_of_week: 1, start_time: "08:00:00", end_time: "10:00:00", is_active: true },
+  ];
+  const bookedKeys = buildBookedAvailabilityKeys([
+    { teacher_id: "teacher-a", date: "2026-08-17", start_time: "08:00:00", status: "scheduled" },
+  ]);
+  assertEqual(bookedKeys.size, 1, "recurring availability: booked key exists");
+  assertEqual(
+    summarizeWeeklyAvailabilityHours(patterns, "teacher-a", week),
+    2,
+    "recurring availability: booked Monday still counts"
+  );
+}
+
+// Duplicate pattern row does not double-count
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const patterns: TeacherAvailabilityRow[] = [
+    { teacher_id: "teacher-a", date: "2026-08-10", day_of_week: 1, start_time: "08:00:00", end_time: "10:00:00", is_active: true },
+    { teacher_id: "teacher-a", date: "2026-08-24", day_of_week: 1, start_time: "08:00:00", end_time: "10:00:00", is_active: true },
+  ];
+  assertEqual(
+    summarizeWeeklyAvailabilityHours(patterns, "teacher-a", week),
+    2,
+    "recurring availability: duplicate Mon pattern counted once"
+  );
+}
+
+// Inactive pattern excluded
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const patterns: TeacherAvailabilityRow[] = [
+    { teacher_id: "teacher-a", date: "2026-08-10", day_of_week: 1, start_time: "08:00:00", end_time: "10:00:00", is_active: true },
+    { teacher_id: "teacher-a", date: "2026-08-12", day_of_week: 3, start_time: "18:00:00", end_time: "20:00:00", is_active: false },
+  ];
+  assertEqual(
+    summarizeWeeklyAvailabilityHours(patterns, "teacher-a", week),
+    2,
+    "recurring availability: inactive pattern excluded"
+  );
+}
+
+// Two teachers' availability does not mix
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const patterns: TeacherAvailabilityRow[] = [
+    { teacher_id: "teacher-a", date: "2026-08-10", day_of_week: 1, start_time: "08:00:00", end_time: "10:00:00", is_active: true },
+    { teacher_id: "teacher-b", date: "2026-08-11", day_of_week: 2, start_time: "14:00:00", end_time: "16:00:00", is_active: true },
+  ];
+  const stats = summarizeWeeklyAvailabilityHoursByTeacher(patterns, ["teacher-a", "teacher-b"], week);
+  assertEqual(stats.get("teacher-a"), 2, "recurring availability: teacher A isolated");
+  assertEqual(stats.get("teacher-b"), 2, "recurring availability: teacher B isolated");
+}
+
+// Sunday weekday mapping (day_of_week 0 → 2026-08-23)
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const patterns: TeacherAvailabilityRow[] = [
+    { teacher_id: "teacher-a", date: "2026-08-30", day_of_week: 0, start_time: "09:00:00", end_time: "10:30:00", is_active: true },
+  ];
+  const expanded = expandWeeklyAvailabilityOccurrences(patterns, week);
+  assertEqual(expanded.get("teacher-a"), 1.5, "recurring availability: Sunday maps to week Sunday");
+}
+
+// Admin weekly stats: two learners same schedule = 1 class
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const units = buildTeachingSessionUnits(
+    emptySource({
+      schedules: [
+        {
+          id: "sch-group",
+          class_id: "class-group",
+          teacher_id: "teacher-a",
+          date: "2026-08-18",
+          start_time: "18:00:00",
+          end_time: "20:00:00",
+          status: "scheduled",
+        },
+      ],
+      sessions: [
+        {
+          id: "grp-1",
+          class_id: "class-group",
+          teacher_id: "teacher-a",
+          status: "active",
+          session_number: 2,
+          session_type: "vietnamese_teacher",
+        },
+        {
+          id: "grp-2",
+          class_id: "class-group",
+          teacher_id: "teacher-a",
+          status: "active",
+          session_number: 2,
+          session_type: "vietnamese_teacher",
+        },
+      ],
+    })
+  );
+  assertEqual(summarizeWeeklyBookedTeaching(units, "teacher-a", week).classCount, 1, "admin weekly: 2 learners = 1 class");
+}
+
+// Admin weekly stats: three learners same schedule = 1 completed class
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const units = buildTeachingSessionUnits(
+    emptySource({
+      schedules: [
+        {
+          id: "sch-triple",
+          class_id: "class-triple",
+          teacher_id: "teacher-a",
+          date: "2026-08-19",
+          start_time: "18:00:00",
+          end_time: "20:00:00",
+          status: "completed",
+        },
+      ],
+      sessions: [
+        {
+          id: "tri-1",
+          class_id: "class-triple",
+          teacher_id: "teacher-a",
+          status: "completed",
+          session_number: 2,
+          session_type: "vietnamese_teacher",
+        },
+        {
+          id: "tri-2",
+          class_id: "class-triple",
+          teacher_id: "teacher-a",
+          status: "completed",
+          session_number: 2,
+          session_type: "vietnamese_teacher",
+        },
+        {
+          id: "tri-3",
+          class_id: "class-triple",
+          teacher_id: "teacher-a",
+          status: "completed",
+          session_number: 2,
+          session_type: "vietnamese_teacher",
+        },
+      ],
+    })
+  );
+  assertEqual(summarizeWeeklyTaughtClasses(units, "teacher-a", week), 1, "admin weekly: 3 learners = 1 completed class");
+}
+
+// Admin weekly stats: upcoming counts in classes but not completed
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const units = buildTeachingSessionUnits(
+    emptySource({
+      schedules: [
+        {
+          id: "sch-done",
+          class_id: "class-done",
+          teacher_id: "teacher-a",
+          date: "2026-08-18",
+          start_time: "18:00:00",
+          end_time: "20:00:00",
+          status: "completed",
+        },
+        {
+          id: "sch-up",
+          class_id: "class-up",
+          teacher_id: "teacher-a",
+          date: "2026-08-20",
+          start_time: "18:00:00",
+          end_time: "20:00:00",
+          status: "scheduled",
+        },
+      ],
+      sessions: [
+        {
+          id: "done-1",
+          class_id: "class-done",
+          teacher_id: "teacher-a",
+          status: "completed",
+          session_number: 2,
+          session_type: "vietnamese_teacher",
+        },
+        {
+          id: "up-1",
+          class_id: "class-up",
+          teacher_id: "teacher-a",
+          status: "active",
+          session_number: 2,
+          session_type: "vietnamese_teacher",
+        },
+      ],
+    })
+  );
+  const stats = summarizeWeeklyClassStatsByTeacher(units, ["teacher-a"], week).get("teacher-a")!;
+  assertEqual(stats.classesThisWeek, 2, "admin weekly: upcoming included in classes");
+  assertEqual(stats.completedClassesThisWeek, 1, "admin weekly: upcoming excluded from completed");
+}
+
+// Admin weekly stats: cancelled schedule counts in neither column
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const units = buildTeachingSessionUnits(
+    emptySource({
+      schedules: [
+        {
+          id: "sch-cancel",
+          class_id: "class-cancel",
+          teacher_id: "teacher-a",
+          date: "2026-08-18",
+          start_time: "18:00:00",
+          end_time: "20:00:00",
+          status: "cancelled",
+        },
+      ],
+      sessions: [
+        {
+          id: "cancel-1",
+          class_id: "class-cancel",
+          teacher_id: "teacher-a",
+          status: "completed",
+          session_number: 2,
+          session_type: "vietnamese_teacher",
+        },
+      ],
+    })
+  );
+  const stats = summarizeWeeklyClassStatsByTeacher(units, ["teacher-a"], week).get("teacher-a")!;
+  assertEqual(stats.classesThisWeek, 0, "admin weekly: cancelled not counted as class");
+  assertEqual(stats.completedClassesThisWeek, 0, "admin weekly: cancelled not counted as completed");
+}
+
+// Admin weekly stats: schedule outside current week excluded
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const units = buildTeachingSessionUnits(
+    emptySource({
+      schedules: [
+        {
+          id: "sch-in",
+          class_id: "class-in",
+          teacher_id: "teacher-a",
+          date: "2026-08-18",
+          start_time: "18:00:00",
+          end_time: "20:00:00",
+          status: "completed",
+        },
+        {
+          id: "sch-out",
+          class_id: "class-out",
+          teacher_id: "teacher-a",
+          date: "2026-08-10",
+          start_time: "18:00:00",
+          end_time: "20:00:00",
+          status: "completed",
+        },
+      ],
+    })
+  );
+  const stats = summarizeWeeklyClassStatsByTeacher(units, ["teacher-a"], week).get("teacher-a")!;
+  assertEqual(stats.classesThisWeek, 1, "admin weekly: outside week excluded");
+  assertEqual(stats.completedClassesThisWeek, 1, "admin weekly: outside week excluded from completed");
+}
+
+// Admin weekly stats: two teachers' data does not mix
+{
+  const week = { start: "2026-08-17", end: "2026-08-23" };
+  const units = buildTeachingSessionUnits(
+    emptySource({
+      schedules: [
+        {
+          id: "sch-a",
+          class_id: "class-a",
+          teacher_id: "teacher-a",
+          date: "2026-08-18",
+          start_time: "18:00:00",
+          end_time: "20:00:00",
+          status: "completed",
+        },
+        {
+          id: "sch-b",
+          class_id: "class-b",
+          teacher_id: "teacher-b",
+          date: "2026-08-19",
+          start_time: "08:00:00",
+          end_time: "10:00:00",
+          status: "scheduled",
+        },
+      ],
+    })
+  );
+  const classStats = summarizeWeeklyClassStatsByTeacher(units, ["teacher-a", "teacher-b"], week);
+  assertEqual(classStats.get("teacher-a"), { classesThisWeek: 1, completedClassesThisWeek: 1 }, "admin weekly: teacher A isolated");
+  assertEqual(classStats.get("teacher-b"), { classesThisWeek: 1, completedClassesThisWeek: 0 }, "admin weekly: teacher B isolated");
 }
 
 console.log("teacherHours tests passed");

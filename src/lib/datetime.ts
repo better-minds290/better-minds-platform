@@ -157,6 +157,15 @@ export function vietnamMondayLocalDate(now: Date = new Date()): Date {
   return getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr(now)));
 }
 
+/** Monday–Sunday YMD range for the calendar week containing today (VN timezone). */
+export function getCurrentWeekRangeYmd(now: Date = new Date()): { start: string; end: string } {
+  const todayStr = vietnamTodayStr(now);
+  const weekStart = getMondayOfWeek(calendarDateToLocalDate(todayStr));
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+  return { start: toLocalDateStr(weekStart), end: toLocalDateStr(weekEnd) };
+}
+
 /** `20/07 (T2)` — Vietnamese short calendar date. */
 export function formatVietnamDateShortVi(dateStr: string): string {
   const parts = getVietnamDateParts(dateStr);
