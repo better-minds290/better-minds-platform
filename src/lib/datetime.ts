@@ -123,6 +123,17 @@ export function vietnamTodayStr(now: Date = new Date()): string {
   return toVietnamDateStr(now);
 }
 
+/** 0=Sun … 6=Sat in Asia/Ho_Chi_Minh. */
+export function getVietnamDayOfWeek(now: Date = new Date()): number {
+  return getVietnamDateParts(now)?.weekday ?? 0;
+}
+
+/** Learner book / reschedule / cancel window: Saturday or Sunday (VN time). */
+export function isLearnerBookingWindowOpen(now: Date = new Date()): boolean {
+  const day = getVietnamDayOfWeek(now);
+  return day === 6 || day === 0;
+}
+
 export function addCalendarDays(yyyyMmDd: string, days: number): string {
   const date = parseToDate(yyyyMmDd);
   date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);

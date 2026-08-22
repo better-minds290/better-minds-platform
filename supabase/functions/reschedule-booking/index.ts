@@ -12,6 +12,11 @@ function getVnDayOfWeek(date: Date): number {
   return vnDate.getUTCDay();
 }
 
+function isLearnerBookingWindowOpen(date: Date): boolean {
+  const vnDay = getVnDayOfWeek(date);
+  return vnDay === 6 || vnDay === 0;
+}
+
 function getVnMonth(date: Date): number {
   const vnDate = new Date(date.getTime() + 7 * 60 * 60 * 1000);
   return vnDate.getUTCMonth();
@@ -115,8 +120,8 @@ serve(async (req: Request) => {
       }
 
       if (!bypass_saturday_check) {
-        if (getVnDayOfWeek(new Date()) !== 6) {
-          return new Response(JSON.stringify({ error: "Reschedule is only open on Saturday.", code: "NOT_SATURDAY" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        if (!isLearnerBookingWindowOpen(new Date())) {
+          return new Response(JSON.stringify({ error: "Reschedule is only open on Saturdays and Sundays.", code: "NOT_BOOKING_DAY" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
       }
 

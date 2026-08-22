@@ -11,6 +11,11 @@ function getVnDayOfWeek(date: Date): number {
   return vnDate.getUTCDay();
 }
 
+function isLearnerBookingWindowOpen(date: Date): boolean {
+  const vnDay = getVnDayOfWeek(date);
+  return vnDay === 6 || vnDay === 0;
+}
+
 function getVnMonth(date: Date): number {
   const vnDate = new Date(date.getTime() + 7 * 60 * 60 * 1000);
   return vnDate.getUTCMonth();
@@ -93,23 +98,22 @@ serve(async (req: Request) => {
       );
     }
 
-    // Saturday-only booking WINDOW guard (today must be Saturday)
+    // Weekend booking WINDOW guard (Saturday or Sunday in VN time)
     // Admins bypass this check via is_admin flag
     if (!is_admin) {
       const today = new Date();
-      const todayDayOfWeek = getVnDayOfWeek(today);
-      if (todayDayOfWeek !== 6) {
-        debugLog.push(`[3] Rejected: today is not Saturday (day=${todayDayOfWeek})`);
+      if (!isLearnerBookingWindowOpen(today)) {
+        const todayDayOfWeek = getVnDayOfWeek(today);
+        debugLog.push(`[3] Rejected: today is not a booking window day (day=${todayDayOfWeek})`);
         return new Response(
-          JSON.stringify({ error: "Booking is only open on Saturday. Please come back on Saturday.", code: "NOT_SATURDAY", debug: debugLog }),
+          JSON.stringify({ error: "Booking is only open on Saturdays and Sundays. Please come back on the weekend.", code: "NOT_BOOKING_DAY", debug: debugLog }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      // NOTE: Removed the "target date must be Saturday" check.
-      // Booking window is Saturday-only, but learners can book any day the teacher is available.
+      // NOTE: Booking window is weekend-only, but learners can book any day the teacher is available.
     }
 
-    debugLog.push("[3] Saturday window check passed" + (is_admin ? " (admin bypass)" : ""));
+    debugLog.push("[3] Weekend booking window check passed" + (is_admin ? " (admin bypass)" : ""));
 
     // Learner lifecycle guard: only active (or legacy paused) enrollments may book
     const { data: learnerEnrollment, error: enrollStatusErr } = await supabaseClient

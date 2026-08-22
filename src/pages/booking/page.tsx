@@ -10,6 +10,7 @@ import {
   calendarDateToLocalDate,
   formatVietnamSlotDate,
   getMondayOfWeek,
+  isLearnerBookingWindowOpen,
   toLocalDateStr,
   vietnamTodayStr,
 } from "@/lib/datetime";
@@ -488,7 +489,7 @@ function BookingCalendarContent() {
       showToast("error", sessionNum === 2 ? t("booking.session2DayRestricted") : t("booking.session3DayRestricted"));
       return;
     }
-    if (!isTodaySaturday()) {
+    if (!isLearnerBookingWindowOpen()) {
       showToast("error", t("booking.saturdayOnlyToast"));
       return;
     }
@@ -568,7 +569,7 @@ function BookingCalendarContent() {
   };
 
   const handleRescheduleClick = async (slot: TeacherSlot) => {
-    if (!isTodaySaturday()) {
+    if (!isLearnerBookingWindowOpen()) {
       showToast("error", t("booking.saturdayOnlyReschedule"));
       return;
     }
@@ -703,13 +704,6 @@ function BookingCalendarContent() {
     }
   };
 
-  // Helper to check if TODAY is Saturday (VN timezone, booking window is open)
-  const isTodaySaturday = (): boolean => {
-    const now = new Date();
-    const vnDate = new Date(now.getTime() + 7 * 60 * 60 * 1000);
-    return vnDate.getUTCDay() === 6;
-  };
-
   // Real-time check: has the slot's end time already passed? (VN timezone)
   const isSlotTimePassed = (slot: TeacherSlot): boolean => {
     const now = new Date();
@@ -719,7 +713,7 @@ function BookingCalendarContent() {
   };
 
   const handleCancelClick = (slot: TeacherSlot) => {
-    if (!isTodaySaturday()) {
+    if (!isLearnerBookingWindowOpen()) {
       showToast("error", t("booking.saturdayOnlyCancel"));
       return;
     }
@@ -936,8 +930,8 @@ function BookingCalendarContent() {
           </div>
         )}
 
-        {/* Saturday booking window notice */}
-        {!isTodaySaturday() && !allBooked && bookableSessions.length > 0 && (
+        {/* Weekend booking window notice */}
+        {!isLearnerBookingWindowOpen() && !allBooked && bookableSessions.length > 0 && (
           <div className="mb-6 p-5 rounded-lg bg-secondary-50 border border-secondary-200 flex items-start gap-4">
             <div className="w-10 h-10 flex items-center justify-center rounded-full bg-secondary-100 text-secondary-600 shrink-0">
               <i className="ri-timer-line text-lg"></i>
