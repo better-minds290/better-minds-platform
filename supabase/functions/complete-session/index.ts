@@ -542,6 +542,17 @@ async function checkSprintCompletion(
   sessionNumber: number,
   debugLog: string[]
 ) {
+  const { data: sprintRow } = await supabaseClient
+    .from("learning_sprints")
+    .select("status")
+    .eq("id", sprintId)
+    .maybeSingle();
+
+  if (sprintRow?.status === "completed") {
+    debugLog.push("[SC] Sprint already completed — late feedback only, skip progression");
+    return;
+  }
+
   const { data: allSessions } = await supabaseClient
     .from("sprint_sessions")
     .select("session_number, status, session_type")

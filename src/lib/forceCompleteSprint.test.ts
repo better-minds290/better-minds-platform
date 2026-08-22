@@ -2,10 +2,12 @@ import { canForceCompleteSprint, selectCurrentAdminSprint, type AdminSprintRow }
 import {
   buildAbsentSessionBookingReleaseUpdate,
   buildForceCompleteSessionUpdate,
+  isTaughtSessionForLateFeedback,
   planBookingReleaseForAbsentBookedSessions,
   planBookingReleaseForForceComplete,
   sessionsEligibleForForceComplete,
   sessionsNeedingLearnerClassRelease,
+  sessionsToPreserveForLateFeedback,
   sessionsWithAbsentBookings,
   shouldDeleteEmptyUpcomingClass,
   shouldShowAttendanceForceComplete,
@@ -279,6 +281,119 @@ function sprint(n: number, status: string, id = `sp-${n}`): AdminSprintRow {
     }),
     false,
     "FC requires related_sprint_id"
+  );
+}
+
+// Taught Sprint 1 session + missing feedback — preserve for late teacher feedback
+{
+  const taught: ForceCompleteSessionRow = {
+    id: "taught-s2",
+    class_id: "class-taught",
+    status: "awaiting_feedback",
+  };
+  const upcoming: ForceCompleteSessionRow = {
+    id: "upcoming-s3",
+    class_id: "class-upcoming",
+    status: "in_progress",
+  };
+  const sessions = [taught, upcoming];
+
+  assertEqual(isTaughtSessionForLateFeedback(taught), true, "awaiting_feedback is taught");
+  assertEqual(isTaughtSessionForLateFeedback(upcoming), false, "in_progress upcoming is not taught");
+  assertEqual(
+    sessionsToPreserveForLateFeedback(sessions).map((s) => s.id),
+    ["taught-s2"],
+    "preserve taught awaiting-feedback session"
+  );
+  assertEqual(
+    sessionsEligibleForForceComplete(sessions).map((s) => s.id),
+    ["upcoming-s3"],
+    "only untaught session is force-completed"
+  );
+  assertEqual(
+    planBookingReleaseForForceComplete(sessions).map((p) => p.sessionId),
+    ["upcoming-s3"],
+    "upcoming booking still released; taught booking kept"
+  );
+  assertEqual(
+    sessionsNeedingLearnerClassRelease(sessions).map((s) => s.id),
+    ["upcoming-s3"],
+    "do not delete taught-session enrollment/attendance"
+  );
+}
+
+// Completed class schedule is taught even if session is still in_progress
+{
+  const taughtBySchedule: ForceCompleteSessionRow = {
+    id: "s-sched",
+    class_id: "class-done",
+    status: "in_progress",
+    scheduleStatus: "completed",
+  };
+  assertEqual(isTaughtSessionForLateFeedback(taughtBySchedule), true, "completed schedule is taught");
+  assertEqual(sessionsEligibleForForceComplete([taughtBySchedule]).length, 0, "do not FC taught-by-schedule");
+}
+
+// Present / pending_review attendance is taught
+{
+  const taughtByAttendance: ForceCompleteSessionRow = {
+    id: "s-att",
+    class_id: "class-att",
+    status: "in_progress",
+    hasPresentAttendance: true,
+  };
+  assertEqual(isTaughtSessionForLateFeedback(taughtByAttendance), true, "present attendance is taught");
+}
+
+// Upcoming/unattended booked session — cleanup unchanged
+{
+  const upcoming: ForceCompleteSessionRow = {
+    id: "s-upcoming",
+    class_id: "class-future",
+    status: "in_progress",
+    scheduleStatus: "scheduled",
+    hasPresentAttendance: false,
+  };
+  assertEqual(isTaughtSessionForLateFeedback(upcoming), false, "upcoming is not taught history");
+  const update = buildForceCompleteSessionUpdate(upcoming, "2026-01-01T00:00:00Z");
+  assertEqual(update.class_id, null, "upcoming unlink class_id");
+  assertEqual(update.teacher_id, null, "upcoming unlink teacher_id");
+}
+
+// Absent session remains absent — not turned into taught feedback history
+{
+  const absent: ForceCompleteSessionRow = {
+    id: "s-abs",
+    class_id: "class-abs",
+    status: "absent",
+    scheduleStatus: "completed",
+    hasPresentAttendance: false,
+  };
+  assertEqual(isTaughtSessionForLateFeedback(absent), false, "absent is not late-feedback taught");
+  assertEqual(sessionsEligibleForForceComplete([absent]).length, 0, "absent not force-completed");
+  assertEqual(
+    planBookingReleaseForAbsentBookedSessions([absent]).length,
+    1,
+    "absent booking cleanup preserved"
+  );
+}
+
+// Group class: learner A taught session preserved; shared class not treated as empty upcoming
+{
+  const learnerATaught: ForceCompleteSessionRow = {
+    id: "sess-a",
+    class_id: "shared-class",
+    status: "awaiting_feedback",
+  };
+  assertEqual(
+    planBookingReleaseForForceComplete([learnerATaught]).length,
+    0,
+    "group taught session not released"
+  );
+  assertEqual(
+    shouldDeleteEmptyUpcomingClass({ remainingEnrollmentCount: 1, scheduleStatus: "scheduled" }),
+    false,
+    "learner B keeps shared class"
   );
 }
 

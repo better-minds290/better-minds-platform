@@ -210,4 +210,31 @@ function liveSession(overrides: Partial<SprintSessionRatingRow> & Pick<SprintSes
   assertEqual(ratings.get("learner-1"), [5], "string completion_rating included");
 }
 
+// Late rating on an already-admin-completed sprint — counted once, no double-count
+{
+  const ratings = aggregateLearnerRatings(
+    baseInput(
+      [
+        liveSession({
+          id: "sess-late",
+          sprint_id: "sp-1",
+          class_id: "class-late",
+          status: "completed",
+          completion_rating: 4,
+        }),
+      ],
+      [
+        {
+          student_id: "learner-1",
+          class_id: "class-late",
+          grade: 4,
+          status: "present",
+          teacher_feedback: "Late feedback after force-complete",
+        },
+      ]
+    )
+  );
+  assertEqual(ratings.get("learner-1"), [4], "late rating counted once via completion_rating");
+}
+
 console.log("learnerReports tests passed");

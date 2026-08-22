@@ -101,11 +101,61 @@ serve(async (req: Request) => {
       });
     }
 
-    const sessionsToComplete = (sprintSessions || []).filter(
-      (s) => s.status !== "completed" && s.status !== "absent"
+    const classIds = [...new Set((sprintSessions || []).map((s) => s.class_id).filter(Boolean))] as string[];
+    const scheduleByClass = new Map<string, { id: string; status: string | null }>();
+    if (classIds.length > 0) {
+      const { data: schedules } = await supabase
+        .from("class_schedules")
+        .select("id, class_id, status")
+        .in("class_id", classIds);
+      (schedules || []).forEach((sc: { id: string; class_id: string; status: string | null }) => {
+        scheduleByClass.set(sc.class_id, { id: sc.id, status: sc.status });
+      });
+    }
+
+    const presentAttendanceBySchedule = new Set<string>();
+    const scheduleIds = [...scheduleByClass.values()].map((sc) => sc.id);
+    if (scheduleIds.length > 0 && learnerId) {
+      const { data: attendanceRows } = await supabase
+        .from("session_attendance")
+        .select("schedule_id, status")
+        .in("schedule_id", scheduleIds)
+        .eq("student_id", learnerId);
+      (attendanceRows || []).forEach((row: { schedule_id: string; status: string | null }) => {
+        if (row.status && row.status !== "absent") {
+          presentAttendanceBySchedule.add(row.schedule_id);
+        }
+      });
+    }
+
+    const enrichedSessions = (sprintSessions || []).map((s) => {
+      const schedule = s.class_id ? scheduleByClass.get(s.class_id) : undefined;
+      return {
+        ...s,
+        scheduleStatus: schedule?.status || null,
+        hasPresentAttendance: schedule ? presentAttendanceBySchedule.has(schedule.id) : false,
+      };
+    });
+
+    // Taught + waiting for feedback: keep historical teacher/class/attendance.
+    // Upcoming / untaught bookings are still released below.
+    const isTaughtForLateFeedback = (s: {
+      status: string;
+      scheduleStatus: string | null;
+      hasPresentAttendance: boolean;
+    }) => {
+      if (s.status === "absent") return false;
+      if (s.status === "awaiting_feedback") return true;
+      if (s.scheduleStatus === "completed") return true;
+      if (s.hasPresentAttendance) return true;
+      return false;
+    };
+
+    const sessionsToComplete = enrichedSessions.filter(
+      (s) => s.status !== "completed" && s.status !== "absent" && !isTaughtForLateFeedback(s)
     );
 
-    const absentBookedSessions = (sprintSessions || []).filter(
+    const absentBookedSessions = enrichedSessions.filter(
       (s) => s.status === "absent" && s.class_id
     );
 
@@ -193,7 +243,8 @@ serve(async (req: Request) => {
             })
             .eq("class_id", classId)
             .neq("status", "completed")
-            .neq("status", "absent");
+            .neq("status", "absent")
+            .neq("status", "awaiting_feedback");
 
           await supabase.from("class_schedules").delete().eq("class_id", classId);
           await supabase.from("class_materials").delete().eq("class_id", classId);

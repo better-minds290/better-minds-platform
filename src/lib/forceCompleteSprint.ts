@@ -2,6 +2,13 @@ export interface ForceCompleteSessionRow {
   id: string;
   class_id: string | null;
   status: string;
+  /** class_schedules.status for this session's class, when known. */
+  scheduleStatus?: string | null;
+  /**
+   * True when this learner already has non-absent session_attendance
+   * (present / pending_review). Attendance is created at teach-time, not booking.
+   */
+  hasPresentAttendance?: boolean;
 }
 
 export interface BookingReleasePlan {
@@ -21,8 +28,37 @@ export interface EmptyClassCleanupPlan {
   deleteUpcomingClassShell: true;
 }
 
+/**
+ * A session that was actually taught and is only waiting for teacher feedback.
+ * Administrative sprint completion must preserve this historical teaching
+ * relationship so the teacher can submit late feedback.
+ *
+ * Existing product signals (do not invent a new taught definition):
+ * - sprint_sessions.status === "awaiting_feedback"
+ * - class_schedules.status === "completed"
+ * - non-absent session_attendance for this learner
+ *
+ * Absent sessions are never treated as taught-for-late-feedback.
+ */
+export function isTaughtSessionForLateFeedback(session: ForceCompleteSessionRow): boolean {
+  if (session.status === "absent") return false;
+  if (session.status === "awaiting_feedback") return true;
+  if (session.scheduleStatus === "completed") return true;
+  if (session.hasPresentAttendance === true) return true;
+  return false;
+}
+
+export function sessionsToPreserveForLateFeedback(
+  sessions: ForceCompleteSessionRow[]
+): ForceCompleteSessionRow[] {
+  return sessions.filter(isTaughtSessionForLateFeedback);
+}
+
+/** Incomplete sessions that may be force-completed. Taught-awaiting-feedback is excluded. */
 export function sessionsEligibleForForceComplete(sessions: ForceCompleteSessionRow[]): ForceCompleteSessionRow[] {
-  return sessions.filter((s) => s.status !== "completed" && s.status !== "absent");
+  return sessions.filter(
+    (s) => s.status !== "completed" && s.status !== "absent" && !isTaughtSessionForLateFeedback(s)
+  );
 }
 
 export function planBookingReleaseForForceComplete(

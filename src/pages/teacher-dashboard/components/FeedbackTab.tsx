@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
 import { formatVietnamDateTime, getUiDateLocale } from "@/lib/datetime";
+import { isPendingTeacherFeedbackSession } from "@/lib/teacherFeedback";
 
 interface SessionStudent {
   studentId: string;
@@ -362,21 +363,21 @@ export default function FeedbackTab() {
     fetchSessions();
   }, [fetchSessions]);
 
-  const pendingCount = sessions.filter((s) => s.status === "awaiting_feedback").length;
+  const pendingCount = sessions.filter((s) => isPendingTeacherFeedbackSession(s.status)).length;
   const reviewedCount = sessions.filter((s) => s.status === "completed").length;
 
   const sortedSessions = useMemo(() => {
     return [...sessions].sort((a, b) => {
-      // Pending first
-      if (a.status === "awaiting_feedback" && b.status !== "awaiting_feedback") return -1;
-      if (a.status !== "awaiting_feedback" && b.status === "awaiting_feedback") return 1;
+      // Pending first — includes taught sessions whose parent sprint was admin-completed
+      if (isPendingTeacherFeedbackSession(a.status) && !isPendingTeacherFeedbackSession(b.status)) return -1;
+      if (!isPendingTeacherFeedbackSession(a.status) && isPendingTeacherFeedbackSession(b.status)) return 1;
       // Then by sprint number desc
       return b.sprintNumber - a.sprintNumber;
     });
   }, [sessions]);
 
   const filteredSessions = sortedSessions.filter((s) => {
-    if (filter === "pending") return s.status === "awaiting_feedback";
+    if (filter === "pending") return isPendingTeacherFeedbackSession(s.status);
     if (filter === "reviewed") return s.status === "completed";
     return true;
   });
@@ -626,7 +627,7 @@ export default function FeedbackTab() {
         <div className="space-y-4">
           {filteredSessions.map((session) => {
             const isExpanded = expandedId === session.sessionId;
-            const isPending = session.status === "awaiting_feedback";
+            const isPending = isPendingTeacherFeedbackSession(session.status);
             const isSaving = savingId === session.sessionId;
             const justSaved = saveSuccess === session.sessionId;
             const absSet = absentStudents[session.sessionId] || new Set<string>();
