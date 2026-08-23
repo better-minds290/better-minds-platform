@@ -237,4 +237,31 @@ function liveSession(overrides: Partial<SprintSessionRatingRow> & Pick<SprintSes
   assertEqual(ratings.get("learner-1"), [4], "late rating counted once via completion_rating");
 }
 
+// Late B-only attendance rating after force-complete — counted once via fallback
+{
+  const ratings = aggregateLearnerRatings(
+    baseInput(
+      [
+        liveSession({
+          id: "sess-b-late",
+          sprint_id: "sp-1",
+          class_id: "class-group",
+          status: "completed",
+          completion_rating: null,
+        }),
+      ],
+      [
+        {
+          student_id: "learner-1",
+          class_id: "class-group",
+          grade: 5,
+          status: "present",
+          teacher_feedback: "Late grade for ungraded learner",
+        },
+      ]
+    )
+  );
+  assertEqual(ratings.get("learner-1"), [5], "late ungraded-learner rating counted once");
+}
+
 console.log("learnerReports tests passed");

@@ -72,4 +72,29 @@ function assertEqual(actual: unknown, expected: unknown, label: string) {
   );
 }
 
+// Active sprint + awaiting feedback — save allowed, later progression still possible
+{
+  assertEqual(
+    canSaveLateTeacherFeedback({ sessionStatus: "awaiting_feedback", sprintStatus: "active" }),
+    true,
+    "active sprint awaiting feedback can submit"
+  );
+}
+
+// Completed session under Completed filter — late write allowed, no second sprint
+{
+  assertEqual(
+    canSaveLateTeacherFeedback({ sessionStatus: "completed", sprintStatus: "completed" }),
+    true,
+    "completed session on completed sprint can still save late grade"
+  );
+  const afterLastLearner = decideSprintProgressionAfterFeedback({
+    sprintStatus: "completed",
+    sessionStatuses: ["completed", "completed", "completed"],
+  });
+  assertEqual(afterLastLearner.shouldGenerateNextSprint, false, "final missing grade does not generate Sprint 2 again");
+  assertEqual(afterLastLearner.shouldNotifySprintCompleted, false, "final missing grade does not duplicate sprint-complete notification");
+  assertEqual(afterLastLearner.shouldUpdateSprint, false, "parent sprint stays completed");
+}
+
 console.log("completeSession tests passed");

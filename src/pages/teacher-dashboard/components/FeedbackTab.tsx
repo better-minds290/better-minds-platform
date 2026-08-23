@@ -3,7 +3,12 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
 import { formatVietnamDateTime, getUiDateLocale } from "@/lib/datetime";
-import { isPendingTeacherFeedbackSession } from "@/lib/teacherFeedback";
+import {
+  buildTeacherFeedbackSubmitGrades,
+  canShowAllAbsentSessionComplete,
+  canShowTeacherFeedbackSubmit,
+  isPendingTeacherFeedbackSession,
+} from "@/lib/teacherFeedback";
 
 interface SessionStudent {
   studentId: string;
@@ -404,14 +409,18 @@ export default function FeedbackTab() {
       const { data: authData } = await supabase.auth.getSession();
       const teacherId = authData?.session?.user?.id;
 
-      const grades = session.students.map((st) => {
-        const key = `${session.sessionId}_${st.studentId}`;
-        const g = studentGrades[key];
-        return {
-          student_id: st.studentId,
-          grade: g?.grade || 3,
-          feedback: g?.feedback || "",
-        };
+      const grades = buildTeacherFeedbackSubmitGrades({
+        sessionId: session.sessionId,
+        learners: session.students.map((st) => ({
+          studentId: st.studentId,
+          grade: st.grade,
+          feedback: st.feedback,
+          attendanceStatus:
+            st.attendanceStatus === "absent" || absentStudents[session.sessionId]?.has(st.studentId)
+              ? "absent"
+              : st.attendanceStatus,
+        })),
+        drafts: studentGrades,
       });
 
       const { data: result, error } = await supabase.functions.invoke("complete-session", {
@@ -631,6 +640,20 @@ export default function FeedbackTab() {
             const isSaving = savingId === session.sessionId;
             const justSaved = saveSuccess === session.sessionId;
             const absSet = absentStudents[session.sessionId] || new Set<string>();
+            const learnersForAction = session.students.map((s) => ({
+              studentId: s.studentId,
+              grade: s.grade,
+              feedback: s.feedback,
+              attendanceStatus: s.attendanceStatus === "absent" || absSet.has(s.studentId) ? "absent" : s.attendanceStatus,
+            }));
+            const showSubmit = canShowTeacherFeedbackSubmit({
+              sessionStatus: session.status,
+              learners: learnersForAction,
+            });
+            const showAllAbsentComplete = canShowAllAbsentSessionComplete({
+              sessionStatus: session.status,
+              learners: learnersForAction,
+            });
             const gradedCount = session.students.filter((s) => s.grade !== null || s.attendanceStatus === "absent" || absSet.has(s.studentId)).length;
             const totalStudents = session.students.length;
 
@@ -851,11 +874,9 @@ export default function FeedbackTab() {
                         );
                       })}
 
-                      {/* Submit button for pending sessions */}
-                      {isPending && session.students.some((s) => {
-                        const alreadyAbsent = s.attendanceStatus === "absent" || absSet.has(s.studentId);
-                        return !alreadyAbsent && s.grade === null;
-                      }) && (
+                      {/* Submit remains available for taught sessions with missing grades,
+                          including Completed after Admin force-complete. */}
+                      {showSubmit && (
                         <div className="flex items-center justify-end gap-3 pt-3 border-t border-background-200">
                           {/* Vắng học buttons for each non-graded student */}
                           <div className="flex items-center gap-2 mr-auto">
@@ -898,7 +919,7 @@ export default function FeedbackTab() {
                             onClick={() => submitGrades(session)}
                             disabled={isSaving || !session.students.every((st) => {
                               const alreadyAbsent = st.attendanceStatus === "absent" || absSet.has(st.studentId);
-                              if (alreadyAbsent) return true;
+                              if (alreadyAbsent || st.grade !== null) return true;
                               const k = `${session.sessionId}_${st.studentId}`;
                               const g = studentGrades[k];
                               return g && g.feedback.trim().length > 0;
@@ -921,10 +942,7 @@ export default function FeedbackTab() {
                       )}
 
                       {/* Submit button when ALL students are absent - allow completion without grades */}
-                      {isPending && session.students.every((s) => {
-                        const alreadyAbsent = s.attendanceStatus === "absent" || absSet.has(s.studentId);
-                        return alreadyAbsent;
-                      }) && (
+                      {showAllAbsentComplete && (
                         <div className="flex items-center justify-end gap-3 pt-3 border-t border-background-200">
                           <span className="text-xs text-foreground-500 mr-auto flex items-center gap-1">
                             <i className="ri-information-line"></i>
