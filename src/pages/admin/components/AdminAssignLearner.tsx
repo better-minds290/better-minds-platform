@@ -10,6 +10,7 @@ import {
   vietnamTodayStr,
 } from "@/lib/datetime";
 import { isSlotAllowedForSession, isTeachingClassDate } from "@/lib/scheduling";
+import { selectAssignableAdminSprint } from "@/lib/adminSprintSelection";
 
 interface Learner {
   id: string;
@@ -106,64 +107,13 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
 
   useEffect(() => { fetchLearners(); }, [fetchLearners]);
 
-  // Auto-select preselected learner from URL (only once)
-  const autoSelectedRef = useRef(false);
-  useEffect(() => {
-    if (autoSelectedRef.current) return;
-    if (preselectedLearnerId && learners.length > 0) {
-      const learner = learners.find((l) => l.id === preselectedLearnerId);
-      if (learner) {
-        autoSelectedRef.current = true;
-        setSelectedLearner(learner);
-        setSelectedSession(null);
-        setSelectedSlot(null);
-        setSlots([]);
-        // Fetch sessions for this learner
-        (async () => {
-          try {
-            const { data: enrollment } = await supabase
-              .from("enrollments")
-              .select("id")
-              .eq("learner_id", learner.id)
-              .in("status", ["active", "paused"])
-              .order("enrolled_at", { ascending: false })
-              .limit(1)
-              .maybeSingle();
-
-            if (!enrollment) return;
-
-            const { data: activeSprint } = await supabase
-              .from("learning_sprints")
-              .select("id")
-              .eq("enrollment_id", enrollment.id)
-              .eq("status", "active")
-              .maybeSingle();
-
-            if (!activeSprint) return;
-
-            const { data: sessions } = await supabase
-              .from("sprint_sessions")
-              .select("id, session_number, session_type, status, teacher_id, scheduled_at, class_id, sprint:learning_sprints!sprint_id(sprint_number)")
-              .eq("sprint_id", activeSprint.id)
-              .order("session_number");
-
-            setLearnerSessions(sessions || []);
-          } catch {
-            // ignore
-          }
-        })();
-      }
-    }
-  }, [preselectedLearnerId, learners, supabase]);
-
-  const handleSelectLearner = async (learner: Learner) => {
+  const handleSelectLearner = useCallback(async (learner: Learner) => {
     setSelectedLearner(learner);
     setSelectedSession(null);
     setSelectedSlot(null);
     setSlots([]);
 
     try {
-      // Find learner's active enrollment and sprint with available/booked sessions
       const { data: enrollment } = await supabase
         .from("enrollments")
         .select("id")
@@ -178,14 +128,13 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
         return;
       }
 
-      const { data: activeSprint } = await supabase
+      const { data: sprints } = await supabase
         .from("learning_sprints")
-        .select("id")
-        .eq("enrollment_id", enrollment.id)
-        .eq("status", "active")
-        .maybeSingle();
+        .select("id, sprint_number, status")
+        .eq("enrollment_id", enrollment.id);
 
-      if (!activeSprint) {
+      const assignableSprint = selectAssignableAdminSprint(sprints || []);
+      if (!assignableSprint) {
         setLearnerSessions([]);
         return;
       }
@@ -193,14 +142,27 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
       const { data: sessions } = await supabase
         .from("sprint_sessions")
         .select("id, session_number, session_type, status, teacher_id, scheduled_at, class_id, sprint:learning_sprints!sprint_id(sprint_number)")
-        .eq("sprint_id", activeSprint.id)
+        .eq("sprint_id", assignableSprint.id)
         .order("session_number");
 
       setLearnerSessions(sessions || []);
     } catch (err) {
       console.error("Failed to fetch learner sessions:", err);
     }
-  };
+  }, [supabase]);
+
+  // Auto-select preselected learner from URL (only once)
+  const autoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (autoSelectedRef.current) return;
+    if (preselectedLearnerId && learners.length > 0) {
+      const learner = learners.find((l) => l.id === preselectedLearnerId);
+      if (learner) {
+        autoSelectedRef.current = true;
+        handleSelectLearner(learner);
+      }
+    }
+  }, [preselectedLearnerId, learners, handleSelectLearner]);
 
   const handleSelectSession = async (sessionId: string, explicitOffset?: number) => {
     setSelectedSession(sessionId);

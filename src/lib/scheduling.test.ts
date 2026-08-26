@@ -1,4 +1,9 @@
-import { isLearnerBookingWindowOpen } from "./datetime";
+import {
+  hasSundayBookingWindowPassed,
+  isLearnerBookingWindowOpen,
+  teachingWeekRangeAfterSunday,
+  vietnamMostRecentSundayYmd,
+} from "./datetime";
 import {
   isSchedulerDayAllowed,
   isSlotAllowedForSession,
@@ -90,5 +95,15 @@ assert(
   isLearnerBookingWindowOpen(new Date("2026-08-30T00:30:00+07:00")) === true,
   "Sunday 00:30 VN is the booking window"
 );
+
+assertEqual(vietnamMostRecentSundayYmd(new Date("2026-08-31T12:00:00+07:00")), "2026-08-30", "Mon → previous Sunday");
+assertEqual(vietnamMostRecentSundayYmd(new Date("2026-09-06T12:00:00+07:00")), "2026-09-06", "Sunday after teaching week is itself");
+assertEqual(
+  teachingWeekRangeAfterSunday("2026-08-30"),
+  { start: "2026-08-31", end: "2026-09-05" },
+  "teaching week Mon–Sat after booking Sunday"
+);
+assert(hasSundayBookingWindowPassed(new Date("2026-08-30T12:00:00+07:00")) === false, "Sunday window not passed");
+assert(hasSundayBookingWindowPassed(new Date("2026-08-31T00:00:00+07:00")) === true, "Monday window passed");
 
 console.log("scheduling.test.ts: all assertions passed");

@@ -4,6 +4,40 @@ import { getSupabase } from "@/lib/supabase";
 import { Link } from "react-router-dom";
 import { deriveLearnerLifecycle, type LearnerLifecycleStatus } from "@/lib/learnerLifecycle";
 import { formatVietnamDate } from "@/lib/datetime";
+import { selectCurrentAdminSprint } from "@/lib/adminSprintSelection";
+import {
+  buildLearnerBookingViews,
+  hasLateFilterMatch,
+  type BookingBadge,
+  type ClassScheduleInfo,
+  type EnrollmentRef,
+  type LearnerBookingView,
+  type LiveSessionRow,
+  type SessionDetailView,
+  type SprintRow,
+} from "@/lib/adminLearnerBooking";
+
+const EMPTY_BOOKING: LearnerBookingView = {
+  liveSessionNumbers: [],
+  session2: null,
+  session3: null,
+  detailsByNumber: {},
+};
+
+const IN_CHUNK = 150;
+
+async function fetchInChunks<T>(ids: string[], query: (chunk: string[]) => any): Promise<T[]> {
+  if (ids.length === 0) return [];
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) chunks.push(ids.slice(i, i + IN_CHUNK));
+  const results = await Promise.all(chunks.map((chunk) => query(chunk)));
+  const rows: T[] = [];
+  for (const res of results) {
+    if (res.error) throw res.error;
+    if (res.data) rows.push(...(res.data as T[]));
+  }
+  return rows;
+}
 
 interface LearnerData {
   id: string;
@@ -12,12 +46,12 @@ interface LearnerData {
   phone: string;
   role: string;
   created_at: string;
-  enrolledClass: string;
   enrollment_id: string | null;
   enrollment_status: string;
   missed_deadlines: number;
   course_name: string;
   status: LearnerLifecycleStatus;
+  booking: LearnerBookingView;
 }
 
 interface ToastState {
@@ -30,7 +64,9 @@ export default function AdminLearners() {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [lateFilter, setLateFilter] = useState(false);
   const [learners, setLearners] = useState<LearnerData[]>([]);
+  const [sessionDetail, setSessionDetail] = useState<SessionDetailView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [resetModal, setResetModal] = useState<{ open: boolean; enrollmentId: string; learnerName: string; missedCount: number } | null>(null);
@@ -64,11 +100,9 @@ export default function AdminLearners() {
     try {
       const supabase = getSupabase();
 
-      const [profilesRes, classEnrollRes, enrollRes, classesRes, coursesRes] = await Promise.all([
+      const [profilesRes, enrollRes, coursesRes] = await Promise.all([
         supabase.from("profiles").select("*").eq("role", "learner").order("created_at", { ascending: false }),
-        supabase.from("class_enrollments").select("student_id, class_id"),
         supabase.from("enrollments").select("id, learner_id, course_id, status, missed_deadlines"),
-        supabase.from("classes").select("id, name"),
         supabase.from("courses").select("id, name"),
       ]);
 
@@ -77,26 +111,19 @@ export default function AdminLearners() {
         return;
       }
 
-      const classMap = new Map<string, string>();
-      (classesRes.data || []).forEach((c) => classMap.set(c.id, c.name));
-
       const courseMap = new Map<string, string>();
       (coursesRes.data || []).forEach((c) => courseMap.set(c.id, c.name));
 
-      const studentClass = new Map<string, string>();
-      (classEnrollRes.data || []).forEach((ce) => {
-        const className = classMap.get(ce.class_id) || "-";
-        studentClass.set(ce.student_id, className);
-      });
-
-      // Prefer an active enrollment over completed when a learner has multiple rows
       const learnerEnrollment = new Map<string, { id: string; status: string; missed: number; courseName: string }>();
+      const enrollmentRefs: EnrollmentRef[] = [];
       (enrollRes.data || []).forEach((en) => {
+        enrollmentRefs.push({ id: en.id, learner_id: en.learner_id, status: en.status || "" });
         const existing = learnerEnrollment.get(en.learner_id);
         const nextStatus = en.status || "";
         const preferNext =
           !existing ||
-          (nextStatus === "active" || nextStatus === "paused") ||
+          nextStatus === "active" ||
+          nextStatus === "paused" ||
           (existing.status === "completed" && nextStatus !== "completed");
         if (!preferNext) return;
         learnerEnrollment.set(en.learner_id, {
@@ -107,9 +134,76 @@ export default function AdminLearners() {
         });
       });
 
+      const preferredEnrollmentIds = [...new Set([...learnerEnrollment.values()].map((e) => e.id))];
+      const sprintRows = await fetchInChunks<SprintRow>(preferredEnrollmentIds, (chunk) =>
+        supabase
+          .from("learning_sprints")
+          .select("id, enrollment_id, sprint_number, status")
+          .in("enrollment_id", chunk)
+      );
+
+      const sprintsByEnrollment = new Map<string, SprintRow[]>();
+      sprintRows.forEach((s) => {
+        const list = sprintsByEnrollment.get(s.enrollment_id) || [];
+        list.push(s);
+        sprintsByEnrollment.set(s.enrollment_id, list);
+      });
+
+      const sprintIdsForSessions = [
+        ...new Set(
+          preferredEnrollmentIds
+            .map((id) => selectCurrentAdminSprint(sprintsByEnrollment.get(id) || [])?.id)
+            .filter((id): id is string => !!id)
+        ),
+      ];
+
+      const sessionRows = await fetchInChunks<LiveSessionRow>(sprintIdsForSessions, (chunk) =>
+        supabase
+          .from("sprint_sessions")
+          .select("id, sprint_id, session_number, session_type, status, teacher_id, scheduled_at, class_id, meeting_link")
+          .in("sprint_id", chunk)
+      );
+
+      const classIds = [...new Set(sessionRows.map((s) => s.class_id).filter((id): id is string => !!id))];
+      const [scheduleRows, classEnrollmentRows] = await Promise.all([
+        fetchInChunks<ClassScheduleInfo>(classIds, (chunk) =>
+          supabase
+            .from("class_schedules")
+            .select("class_id, date, start_time, end_time, status, teacher_id")
+            .in("class_id", chunk)
+        ),
+        fetchInChunks<{ class_id: string; student_id: string }>(classIds, (chunk) =>
+          supabase.from("class_enrollments").select("class_id, student_id").in("class_id", chunk)
+        ),
+      ]);
+
+      const teacherIds = [
+        ...new Set(
+          [...sessionRows.map((s) => s.teacher_id), ...scheduleRows.map((s) => s.teacher_id)].filter(
+            (id): id is string => !!id
+          )
+        ),
+      ];
+      const teacherMap = new Map<string, string>();
+      if (teacherIds.length > 0) {
+        const teacherProfiles = await fetchInChunks<{ id: string; full_name: string | null }>(teacherIds, (chunk) =>
+          supabase.from("profiles").select("id, full_name").in("id", chunk)
+        );
+        teacherProfiles.forEach((p) => teacherMap.set(p.id, p.full_name || ""));
+      }
+
+      const views = buildLearnerBookingViews({
+        learnerIds: profilesRes.data.map((p) => p.id),
+        enrollments: enrollmentRefs,
+        sprints: sprintRows,
+        sessions: sessionRows,
+        schedules: scheduleRows,
+        teachersById: teacherMap,
+        classEnrollments: classEnrollmentRows,
+      });
+
       const merged: LearnerData[] = profilesRes.data.map((p) => {
         const enr = learnerEnrollment.get(p.id);
-        const className = studentClass.get(p.id) || "-";
         const enrollStatus = enr?.status || "";
         const status = deriveLearnerLifecycle(enr ? [enrollStatus] : []);
 
@@ -120,12 +214,12 @@ export default function AdminLearners() {
           phone: p.phone || "",
           role: p.role || "learner",
           created_at: p.created_at || "",
-          enrolledClass: className,
           enrollment_id: enr?.id || null,
           enrollment_status: enrollStatus || status,
           missed_deadlines: enr?.missed || 0,
           course_name: enr?.courseName || "-",
           status,
+          booking: views.get(p.id) || EMPTY_BOOKING,
         };
       });
 
@@ -257,7 +351,8 @@ export default function AdminLearners() {
       l.full_name.toLowerCase().includes(search.toLowerCase()) ||
       l.email.toLowerCase().includes(search.toLowerCase());
     const matchStatus = statusFilter === "all" || l.status === statusFilter;
-    return matchSearch && matchStatus;
+    const matchLate = !lateFilter || hasLateFilterMatch(l.booking);
+    return matchSearch && matchStatus && matchLate;
   });
 
   const getStatusBadge = (status: LearnerLifecycleStatus) => {
@@ -281,6 +376,64 @@ export default function AdminLearners() {
     if (!dateStr) return "-";
     return formatVietnamDate(dateStr, { month: "short", day: "numeric", year: "numeric" }, "en-US");
   };
+
+  const bookingBadgeLabel = (badge: BookingBadge) => {
+    if (badge === "booked") return t("auth.adminLearnersBooked");
+    if (badge === "late") return t("auth.adminLearnersLate");
+    return "";
+  };
+
+  const sessionStatusLabel = (status: string) => {
+    const map: Record<string, string> = {
+      available: t("auth.adminLearnersStatusAvailable"),
+      locked: t("auth.adminLearnersStatusLocked"),
+      in_progress: t("auth.adminLearnersStatusInProgress"),
+      active: t("auth.adminLearnersStatusInProgress"),
+      awaiting_feedback: t("auth.adminLearnersStatusAwaitingFeedback"),
+      completed: t("auth.adminLearnersStatusCompleted"),
+      absent: t("auth.adminLearnersStatusAbsent"),
+    };
+    return map[status] || status;
+  };
+
+  const classStatusLabel = (status: string | null) => {
+    if (!status) return t("auth.adminAttendanceNone");
+    if (status === "scheduled") return t("auth.adminLearnersClassScheduled");
+    if (status === "completed") return t("auth.adminLearnersClassCompleted");
+    if (status === "cancelled" || status === "canceled") return t("auth.adminLearnersClassCancelled");
+    return status;
+  };
+
+  const detailRows = (detail: SessionDetailView) => [
+    { label: t("auth.adminLearnersFieldSession"), value: String(detail.sessionNumber) },
+    { label: t("auth.adminLearnersFieldSprint"), value: String(detail.sprintNumber) },
+    { label: t("auth.adminLearnersFieldStatus"), value: sessionStatusLabel(detail.sessionStatus) },
+    { label: t("auth.adminLearnersFieldTeacher"), value: detail.teacherName || t("auth.adminAttendanceNone") },
+    {
+      label: t("auth.adminLearnersFieldDate"),
+      value: detail.scheduledDate ? formatDate(detail.scheduledDate) : t("auth.adminAttendanceNone"),
+    },
+    {
+      label: t("auth.adminLearnersFieldStart"),
+      value: detail.startTime || t("auth.adminAttendanceNone"),
+    },
+    { label: t("auth.adminLearnersFieldEnd"), value: detail.endTime || t("auth.adminAttendanceNone") },
+    {
+      label: t("auth.adminLearnersFieldDuration"),
+      value: detail.durationMinutes != null
+        ? t("auth.adminLearnersMinutes", { n: detail.durationMinutes })
+        : t("auth.adminAttendanceNone"),
+    },
+    { label: t("auth.adminLearnersFieldClassStatus"), value: classStatusLabel(detail.classStatus) },
+    {
+      label: t("auth.adminLearnersFieldBooking"),
+      value: detail.bookingBadge === "booked"
+        ? t("auth.adminLearnersBooked")
+        : detail.bookingBadge === "late"
+          ? t("auth.adminLearnersLate")
+          : sessionStatusLabel(detail.sessionStatus),
+    },
+  ];
 
   return (
     <div>
@@ -542,6 +695,66 @@ export default function AdminLearners() {
         </div>
       )}
 
+      {/* Session details — informational only */}
+      {sessionDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-background-50 rounded-2xl w-full max-w-md mx-4 shadow-xl border border-background-200 overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-start justify-between gap-3 mb-4">
+                <div>
+                  <h3 className="text-lg font-bold text-foreground-950">
+                    {t("auth.adminLearnersSessionDetail")}
+                  </h3>
+                  <p className="text-xs text-foreground-500 mt-0.5">
+                    {t("auth.adminAttendanceDetailSeparator", {
+                      session: t("auth.adminAttendanceSessionNum", { num: sessionDetail.sessionNumber }),
+                      sprint: t("auth.adminAttendanceSprintNum", { num: sessionDetail.sprintNumber }),
+                    })}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSessionDetail(null)}
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-background-100 text-foreground-500 hover:bg-background-200 cursor-pointer"
+                >
+                  <i className="ri-close-line text-lg"></i>
+                </button>
+              </div>
+              <div className="space-y-2.5">
+                {detailRows(sessionDetail).map((row) => (
+                  <div key={row.label} className="flex items-start justify-between gap-4 text-sm">
+                    <span className="text-foreground-500">{row.label}</span>
+                    <span className="text-foreground-900 font-medium text-right">{row.value}</span>
+                  </div>
+                ))}
+                <div className="flex items-start justify-between gap-4 text-sm">
+                  <span className="text-foreground-500">{t("auth.adminLearnersFieldMeeting")}</span>
+                  {sessionDetail.meetingLink ? (
+                    <a
+                      href={sessionDetail.meetingLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary-700 font-medium text-right hover:underline break-all"
+                    >
+                      {sessionDetail.meetingLink}
+                    </a>
+                  ) : (
+                    <span className="text-foreground-900 font-medium">{t("auth.adminAttendanceNone")}</span>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSessionDetail(null)}
+                className="mt-6 w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-background-100 text-foreground-700 hover:bg-background-200 transition-colors cursor-pointer"
+              >
+                {t("auth.adminCancel")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mb-8">
         <h2 className="font-heading text-xl font-bold text-foreground-950 mb-1">
           {t("auth.adminLearnerManagement")}
@@ -570,6 +783,17 @@ export default function AdminLearners() {
           <option value="active">{t("auth.adminActive")}</option>
           <option value="completed">{t("auth.adminCompleted")}</option>
         </select>
+        <button
+          type="button"
+          onClick={() => setLateFilter((v) => !v)}
+          className={`px-4 py-2.5 text-sm border rounded-lg font-medium whitespace-nowrap cursor-pointer transition-all duration-200 ${
+            lateFilter
+              ? "bg-accent-50 border-accent-300 text-accent-700"
+              : "bg-background-50 border-background-200 text-foreground-700 hover:bg-background-100"
+          }`}
+        >
+          {t("auth.adminFilterLate")}
+        </button>
       </div>
 
       {error && (
@@ -611,7 +835,7 @@ export default function AdminLearners() {
                 <th className="text-left px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider hidden md:table-cell">
                   {t("auth.adminPhone")}
                 </th>
-                <th className="text-left px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider hidden lg:table-cell">
+                <th className="text-left px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider">
                   {t("auth.adminEnrolledClass")}
                 </th>
                 <th className="text-center px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider">
@@ -640,14 +864,52 @@ export default function AdminLearners() {
                   </td>
                   <td className="px-5 py-3.5 text-foreground-600">{learner.email}</td>
                   <td className="px-5 py-3.5 text-foreground-600 hidden md:table-cell">{learner.phone || "-"}</td>
-                  <td className="px-5 py-3.5 text-foreground-600 hidden lg:table-cell">{learner.enrolledClass}</td>
-                  <td className="px-5 py-3.5 text-center">
-                    {learner.missed_deadlines > 0 ? (
-                      <span className="inline-flex items-center justify-center min-w-[24px] h-6 px-1.5 rounded-full text-xs font-bold bg-accent-50 text-accent-600 border border-accent-200">
-                        {learner.missed_deadlines}
-                      </span>
+                  <td className="px-5 py-3.5">
+                    {learner.booking.liveSessionNumbers.length === 0 ? (
+                      <span className="text-foreground-400">{t("auth.adminAttendanceNone")}</span>
                     ) : (
-                      <span className="text-foreground-400 text-xs">0</span>
+                      <div className="flex items-center gap-2">
+                        {learner.booking.liveSessionNumbers.map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => {
+                              const detail = learner.booking.detailsByNumber[n];
+                              if (detail) setSessionDetail(detail);
+                            }}
+                            className="inline-flex items-center justify-center min-w-[28px] h-7 px-2 rounded-md text-sm font-semibold bg-primary-50 text-primary-700 border border-primary-200 hover:bg-primary-100 transition-colors cursor-pointer"
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-5 py-3.5">
+                    {learner.booking.session2 !== "booked" &&
+                    learner.booking.session2 !== "late" &&
+                    learner.booking.session3 !== "booked" &&
+                    learner.booking.session3 !== "late" ? (
+                      <span className="text-foreground-400 text-xs">{t("auth.adminAttendanceNone")}</span>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-center gap-2">
+                        {([2, 3] as const).map((n) => {
+                          const badge = n === 2 ? learner.booking.session2 : learner.booking.session3;
+                          if (badge !== "booked" && badge !== "late") return null;
+                          return (
+                            <span
+                              key={n}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${
+                                badge === "booked"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-accent-50 text-accent-700 border border-accent-200"
+                              }`}
+                            >
+                              {n} {bookingBadgeLabel(badge)}
+                            </span>
+                          );
+                        })}
+                      </div>
                     )}
                   </td>
                   <td className="px-5 py-3.5 text-center">

@@ -1,4 +1,11 @@
-import { canForceCompleteSprint, selectCurrentAdminSprint, type AdminSprintRow } from "./adminSprintSelection";
+import {
+  canAdminAssignAvailableSession,
+  canForceCompleteSprint,
+  isAdminAssignableSprintStatus,
+  selectAssignableAdminSprint,
+  selectCurrentAdminSprint,
+  type AdminSprintRow,
+} from "./adminSprintSelection";
 import {
   buildAbsentSessionBookingReleaseUpdate,
   buildForceCompleteSessionUpdate,
@@ -66,6 +73,34 @@ function sprint(n: number, status: string, id = `sp-${n}`): AdminSprintRow {
 {
   const current = selectCurrentAdminSprint([sprint(1, "completed"), sprint(2, "locked")]);
   assertEqual(current?.sprint_number, 2, "locked sprint is next unfinished");
+}
+
+// Admin Assign: active + expired only; reuse current-sprint priority, never first row
+{
+  const mixed = [sprint(1, "completed"), sprint(2, "expired"), sprint(3, "pending")];
+  assertEqual(selectAssignableAdminSprint(mixed)?.id, "sp-2", "assignable is expired current, not sprints[0]");
+  assertEqual(selectAssignableAdminSprint(mixed)?.status, "expired", "expired current is assignable");
+
+  const activeWins = [sprint(1, "completed"), sprint(2, "active"), sprint(3, "pending")];
+  assertEqual(selectAssignableAdminSprint(activeWins)?.id, "sp-2", "assignable prefers active over later pending");
+
+  assertEqual(selectAssignableAdminSprint([sprint(1, "completed"), sprint(2, "pending")]), null, "pending sprint is not assignable");
+  assertEqual(selectAssignableAdminSprint([sprint(1, "completed"), sprint(2, "locked")]), null, "locked sprint is not assignable");
+  assertEqual(selectAssignableAdminSprint([sprint(1, "completed"), sprint(2, "completed")]), null, "completed sprint is not assignable");
+
+  assertEqual(isAdminAssignableSprintStatus("active"), true, "active status assignable");
+  assertEqual(isAdminAssignableSprintStatus("expired"), true, "expired status assignable");
+  assertEqual(isAdminAssignableSprintStatus("pending"), false, "pending status not assignable");
+  assertEqual(isAdminAssignableSprintStatus("locked"), false, "locked status not assignable");
+  assertEqual(isAdminAssignableSprintStatus("completed"), false, "completed status not assignable");
+
+  assertEqual(canAdminAssignAvailableSession("active", "available"), true, "active sprint + available S2 assignable");
+  assertEqual(canAdminAssignAvailableSession("expired", "available"), true, "expired sprint + available S2 assignable");
+  assertEqual(canAdminAssignAvailableSession("expired", "available"), true, "expired sprint + available S3 assignable");
+  assertEqual(canAdminAssignAvailableSession("pending", "available"), false, "pending sprint not assignable");
+  assertEqual(canAdminAssignAvailableSession("locked", "available"), false, "locked sprint not assignable");
+  assertEqual(canAdminAssignAvailableSession("completed", "available"), false, "completed sprint not assignable");
+  assertEqual(canAdminAssignAvailableSession("expired", "in_progress"), false, "already booked session not re-listed as available");
 }
 
 // Double force-complete guard

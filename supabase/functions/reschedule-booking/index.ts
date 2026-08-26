@@ -258,6 +258,25 @@ serve(async (req: Request) => {
       console.log(`[ADMIN-ASSIGN][${REQ}] Session found: status=${sessionData.status}, class_id=${sessionData.class_id || "none"}`);
       await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "1-session-lookup", status: "ok", detail: `Session found: status=${sessionData.status}, class_id=${sessionData.class_id || "none"}`, data: { sprint_id: sessionData.sprint_id, session_number: sessionData.session_number } });
 
+      const { data: parentSprint, error: sprintErr } = await supabaseClient
+        .from("learning_sprints")
+        .select("id, status")
+        .eq("id", sessionData.sprint_id)
+        .maybeSingle();
+
+      if (sprintErr || !parentSprint) {
+        await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "1c-sprint-lookup", status: "error", detail: `Sprint error: ${sprintErr?.message || "not found"}` });
+        return new Response(JSON.stringify({ error: "Sprint not found", detail: sprintErr?.message }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      if (parentSprint.status !== "active" && parentSprint.status !== "expired") {
+        await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "1c-sprint-status", status: "error", detail: `Sprint status ${parentSprint.status} is not assignable` });
+        return new Response(JSON.stringify({ error: "Sprint must be active or expired to assign. Pending or locked sprints require Unlock first.", code: "SPRINT_NOT_ASSIGNABLE" }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      console.log(`[ADMIN-ASSIGN][${REQ}] Parent sprint ${parentSprint.id} status=${parentSprint.status} — assign allowed`);
+      await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "1c-sprint-status", status: "ok", detail: `Sprint status=${parentSprint.status}` });
+
       if (!isTeachingClassDate(dt)) {
         await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "1b-sunday-class", status: "error", detail: `Sunday class date rejected: ${dt}` });
         return new Response(JSON.stringify({ error: SUNDAY_CLASS_NOT_ALLOWED, code: "SUNDAY_CLASS_NOT_ALLOWED" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });

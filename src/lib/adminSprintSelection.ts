@@ -6,6 +6,9 @@ export interface AdminSprintRow {
 
 const UNFINISHED_SPRINT_STATUSES = new Set(["pending", "locked"]);
 
+/** Admin Assign may book live sessions on these current sprints only. */
+export const ADMIN_ASSIGNABLE_SPRINT_STATUSES = new Set(["active", "expired"]);
+
 /**
  * Pick the sprint Admin Sprint tab should treat as the learner's current sprint.
  *
@@ -30,6 +33,24 @@ export function selectCurrentAdminSprint(sprints: AdminSprintRow[]): AdminSprint
   if (nextPending) return nextPending;
 
   return sorted[sorted.length - 1];
+}
+
+export function isAdminAssignableSprintStatus(status: string): boolean {
+  return ADMIN_ASSIGNABLE_SPRINT_STATUSES.has(status);
+}
+
+/**
+ * Current sprint Admin Assign may load. Reuses current-sprint priority (active, then
+ * expired) and returns null for pending/locked/completed — those need Unlock first.
+ */
+export function selectAssignableAdminSprint(sprints: AdminSprintRow[]): AdminSprintRow | null {
+  const current = selectCurrentAdminSprint(sprints);
+  if (!current || !isAdminAssignableSprintStatus(current.status)) return null;
+  return current;
+}
+
+export function canAdminAssignAvailableSession(sprintStatus: string, sessionStatus: string): boolean {
+  return isAdminAssignableSprintStatus(sprintStatus) && sessionStatus === "available";
 }
 
 export function canForceCompleteSprint(status: string): boolean {

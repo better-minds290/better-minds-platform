@@ -133,6 +133,32 @@ export function isLearnerBookingWindowOpen(now: Date = new Date()): boolean {
   return getVietnamDayOfWeek(now) === 0;
 }
 
+/**
+ * YYYY-MM-DD of the most recent Sunday in Vietnam.
+ * If `now` is Sunday, that is today — the current booking window, which has not ended.
+ */
+export function vietnamMostRecentSundayYmd(now: Date = new Date()): string {
+  const today = vietnamTodayStr(now);
+  const dow = getVietnamDayOfWeek(now);
+  return addCalendarDays(today, -dow);
+}
+
+/**
+ * True Mon–Sat VN: the Sunday booking window for the current teaching week has ended.
+ * False on Sunday: learners can still book, so do not mark Late.
+ */
+export function hasSundayBookingWindowPassed(now: Date = new Date()): boolean {
+  return getVietnamDayOfWeek(now) !== 0;
+}
+
+/** Teaching week (Mon–Sat) that follows a booking Sunday. */
+export function teachingWeekRangeAfterSunday(sundayYmd: string): { start: string; end: string } {
+  return {
+    start: addCalendarDays(sundayYmd, 1),
+    end: addCalendarDays(sundayYmd, 6),
+  };
+}
+
 export function addCalendarDays(yyyyMmDd: string, days: number): string {
   const date = parseToDate(yyyyMmDd);
   date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
