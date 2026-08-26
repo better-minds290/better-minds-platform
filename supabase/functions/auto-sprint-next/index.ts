@@ -43,11 +43,19 @@ function preferredTimeToHours(preferred: string): { startHour: number; endHour: 
   return { startHour: 8, endHour: 20 };
 }
 
+function isSchedulerDayAllowed(sessionNumber: number, dayOfWeek: number): boolean {
+  if (dayOfWeek === 0) return false;
+  if (sessionNumber === 2) return dayOfWeek >= 1 && dayOfWeek <= 3;
+  if (sessionNumber === 3) return dayOfWeek >= 4 && dayOfWeek <= 6;
+  return dayOfWeek >= 1 && dayOfWeek <= 6;
+}
+
 function findBestSlot(
   slots: TimeSlot[],
   preferredRange: { startHour: number; endHour: number },
   deadlineDate: Date,
   minDaysFromNow: number,
+  sessionNumber: number,
 ): { scheduledAt: Date; dayOfWeek: number } | null {
   const now = new Date();
   const maxDate = new Date(deadlineDate);
@@ -57,6 +65,7 @@ function findBestSlot(
 
   for (let d = new Date(minDate); d <= maxDate; d.setDate(d.getDate() + 1)) {
     const dayOfWeek = getVnDayOfWeek(d);
+    if (!isSchedulerDayAllowed(sessionNumber, dayOfWeek)) continue;
     for (const slot of slots) {
       if (slot.dayOfWeek !== dayOfWeek) continue;
       const overlapStart = Math.max(slot.startHour + slot.startMin / 60, preferredRange.startHour);
@@ -289,7 +298,7 @@ serve(async (req: Request) => {
           });
 
         const deadline = nextPending.deadline_session2 ? new Date(nextPending.deadline_session2) : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
-        const bestSlot = slots.length > 0 ? findBestSlot(slots, preferredRange, deadline, 1) : null;
+        const bestSlot = slots.length > 0 ? findBestSlot(slots, preferredRange, deadline, 1, 2) : null;
 
         return {
           teacherId: t.id,
@@ -313,7 +322,7 @@ serve(async (req: Request) => {
           });
 
         const deadline = nextPending.deadline_session3 ? new Date(nextPending.deadline_session3) : new Date(Date.now() + 21 * 24 * 60 * 60 * 1000);
-        const bestSlot = slots.length > 0 ? findBestSlot(slots, preferredRange, deadline, 3) : null;
+        const bestSlot = slots.length > 0 ? findBestSlot(slots, preferredRange, deadline, 3, 3) : null;
 
         return {
           teacherId: t.id,

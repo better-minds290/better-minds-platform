@@ -128,10 +128,9 @@ export function getVietnamDayOfWeek(now: Date = new Date()): number {
   return getVietnamDateParts(now)?.weekday ?? 0;
 }
 
-/** Learner book / reschedule / cancel window: Saturday or Sunday (VN time). */
+/** Learner book / reschedule / cancel window: Sunday only (VN time). */
 export function isLearnerBookingWindowOpen(now: Date = new Date()): boolean {
-  const day = getVietnamDayOfWeek(now);
-  return day === 6 || day === 0;
+  return getVietnamDayOfWeek(now) === 0;
 }
 
 export function addCalendarDays(yyyyMmDd: string, days: number): string {

@@ -549,14 +549,48 @@ assertEqual(formatTeachingHours(1.5, "giờ"), "1.5 giờ", "decimal hours not r
   assertEqual(stats.get("teacher-b"), 2, "recurring availability: teacher B isolated");
 }
 
-// Sunday weekday mapping (day_of_week 0 → 2026-08-23)
+// Sunday availability is not teaching availability (day_of_week 0 must not count)
 {
   const week = { start: "2026-08-17", end: "2026-08-23" };
   const patterns: TeacherAvailabilityRow[] = [
     { teacher_id: "teacher-a", date: "2026-08-30", day_of_week: 0, start_time: "09:00:00", end_time: "10:30:00", is_active: true },
   ];
   const expanded = expandWeeklyAvailabilityOccurrences(patterns, week);
-  assertEqual(expanded.get("teacher-a"), 1.5, "recurring availability: Sunday maps to week Sunday");
+  assertEqual(expanded.get("teacher-a"), undefined, "recurring availability: Sunday does not count toward teaching hours");
+}
+
+// Historical Sunday classes remain in workload / honor totals
+{
+  const units = buildTeachingSessionUnits(
+    emptySource({
+      schedules: [
+        {
+          id: "sch-sunday-history",
+          class_id: "class-sunday-history",
+          teacher_id: "teacher-a",
+          date: "2026-08-23",
+          start_time: "09:00:00",
+          end_time: "10:30:00",
+          status: "completed",
+        },
+      ],
+      sessions: [
+        {
+          id: "sess-sunday-history",
+          class_id: "class-sunday-history",
+          teacher_id: "teacher-a",
+          status: "completed",
+          session_number: 3,
+          session_type: "foreign_teacher",
+        },
+      ],
+    })
+  );
+  const stats = summarizeTeacherHours(units).get("teacher-a")!;
+  assertEqual(units.length, 1, "historical Sunday class is preserved as a teaching unit");
+  assertEqual(units[0].date, "2026-08-23", "historical Sunday class keeps its Sunday date");
+  assertEqual(stats.taughtSessions, 1, "historical Sunday class still counts as taught");
+  assertEqual(stats.teachingHours, 1.5, "historical Sunday class hours are not deleted");
 }
 
 // Admin weekly stats: two learners same schedule = 1 class

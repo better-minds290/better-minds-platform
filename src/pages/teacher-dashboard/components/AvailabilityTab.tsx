@@ -11,6 +11,7 @@ import {
   toLocalDateStr,
   vietnamTodayStr,
 } from "@/lib/datetime";
+import { isTeachingClassDate } from "@/lib/scheduling";
 
 interface TimeSlot {
   id?: string;
@@ -35,21 +36,21 @@ function getNextWeekRange() {
   const nextMonday = new Date(thisMonday);
   nextMonday.setDate(thisMonday.getDate() + 7);
 
-  const nextSunday = new Date(nextMonday);
-  nextSunday.setDate(nextMonday.getDate() + 6);
-  nextSunday.setHours(23, 59, 59, 999);
+  const nextSaturday = new Date(nextMonday);
+  nextSaturday.setDate(nextMonday.getDate() + 5);
+  nextSaturday.setHours(23, 59, 59, 999);
 
   return {
     monday: nextMonday,
-    sunday: nextSunday,
+    saturday: nextSaturday,
     mondayStr: toLocalDateStr(nextMonday),
-    sundayStr: toLocalDateStr(nextSunday),
+    saturdayStr: toLocalDateStr(nextSaturday),
   };
 }
 
 function isDateInNextWeek(dateStr: string): boolean {
-  const { mondayStr, sundayStr } = getNextWeekRange();
-  return dateStr >= mondayStr && dateStr <= sundayStr;
+  const { mondayStr, saturdayStr } = getNextWeekRange();
+  return dateStr >= mondayStr && dateStr <= saturdayStr;
 }
 
 export default function AvailabilityTab() {
@@ -175,6 +176,11 @@ export default function AvailabilityTab() {
     const em = totalMin % 60;
     const endTime = `${String(eh).padStart(2, "0")}:${String(em).padStart(2, "0")}`;
 
+    if (!isTeachingClassDate(newSlotDate)) {
+      showToast("error", t("teacher.availabilitySundayBlocked"));
+      return;
+    }
+
     const newDow = new Date(newSlotDate + "T00:00:00").getDay();
     const exists = slots.some((s) => {
       const sDow = new Date(s.date + "T00:00:00").getDay();
@@ -197,7 +203,7 @@ export default function AvailabilityTab() {
     const next = new Date(newSlotDate + "T00:00:00");
     next.setDate(next.getDate() + 1);
     const nextStr = toLocalDateStr(next);
-    if (nextStr <= nextWeek.sundayStr) {
+    if (nextStr <= nextWeek.saturdayStr) {
       setNewSlotDate(nextStr);
     }
   };
@@ -209,6 +215,10 @@ export default function AvailabilityTab() {
       if (globalIdx === -1) return prev;
 
       if (field === "date") {
+        if (!isTeachingClassDate(value as string)) {
+          showToast("error", t("teacher.availabilitySundayBlocked"));
+          return prev;
+        }
         updated[index] = { ...updated[index], date: value as string };
       } else if (field === "start_time") {
         updated[index] = { ...updated[index], start_time: value as string };
@@ -303,7 +313,7 @@ export default function AvailabilityTab() {
         .eq("teacher_id", profile.id);
       if (deleteError) throw deleteError;
 
-      const activeSlots = slots.filter((s) => s.is_active && s.date);
+      const activeSlots = slots.filter((s) => s.is_active && s.date && isTeachingClassDate(s.date));
       const dedupedSlots = activeSlots.filter(
         (slot, idx, arr) => {
           const dow = new Date(slot.date + "T00:00:00").getDay();
@@ -397,7 +407,7 @@ export default function AvailabilityTab() {
 
   const weekLabel = useMemo(() => {
     const formatShort = (d: Date) => `${t(`booking.months.${monthKeys[d.getMonth()]}`)} ${d.getDate()}`;
-    return `${formatShort(nextWeek.monday)} – ${formatShort(nextWeek.sunday)}, ${nextWeek.monday.getFullYear()}`;
+    return `${formatShort(nextWeek.monday)} – ${formatShort(nextWeek.saturday)}, ${nextWeek.monday.getFullYear()}`;
   }, [nextWeek, t, monthKeys]);
 
   if (loading) {
@@ -468,7 +478,7 @@ export default function AvailabilityTab() {
                   type="date"
                   value={newSlotDate}
                   min={nextWeek.mondayStr}
-                  max={nextWeek.sundayStr}
+                  max={nextWeek.saturdayStr}
                   onChange={(e) => setNewSlotDate(e.target.value)}
                   className="text-sm rounded-md border border-background-200 bg-background-50 px-2 py-1.5 text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-300 cursor-pointer"
                 />
@@ -498,6 +508,11 @@ export default function AvailabilityTab() {
                 const startTime = timeInput?.value || "08:00";
                 const dur = parseInt(durationInput?.value || "60", 10);
 
+                if (!isTeachingClassDate(newSlotDate)) {
+                  showToast("error", t("teacher.availabilitySundayBlocked"));
+                  return;
+                }
+
                 const newDow = new Date(newSlotDate + "T00:00:00").getDay();
                 const exists = slots.some((s) => {
                   const sDow = new Date(s.date + "T00:00:00").getDay();
@@ -524,7 +539,7 @@ export default function AvailabilityTab() {
                 const next = new Date(newSlotDate + "T00:00:00");
                 next.setDate(next.getDate() + 1);
                 const nextStr = toLocalDateStr(next);
-                if (nextStr <= nextWeek.sundayStr) {
+                if (nextStr <= nextWeek.saturdayStr) {
                   setNewSlotDate(nextStr);
                 }
               }}
@@ -575,7 +590,7 @@ export default function AvailabilityTab() {
                       type="date"
                       value={slot.date}
                       min={nextWeek.mondayStr}
-                      max={nextWeek.sundayStr}
+                      max={nextWeek.saturdayStr}
                       onChange={(e) => handleUpdateSlot(idx, "date", e.target.value)}
                       className="text-sm rounded-md border border-background-200 bg-background-50 px-2 py-1.5 text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-300 cursor-pointer"
                     />

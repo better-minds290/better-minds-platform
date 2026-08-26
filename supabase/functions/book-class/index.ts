@@ -12,8 +12,7 @@ function getVnDayOfWeek(date: Date): number {
 }
 
 function isLearnerBookingWindowOpen(date: Date): boolean {
-  const vnDay = getVnDayOfWeek(date);
-  return vnDay === 6 || vnDay === 0;
+  return getVnDayOfWeek(date) === 0;
 }
 
 function getVnMonth(date: Date): number {
@@ -31,19 +30,28 @@ function weekdayFromSlotDate(dateStr: string): number {
   return new Date(`${dateStr}T12:00:00+07:00`).getUTCDay();
 }
 
-/** Session 2 = Mon–Thu (1–4). Session 3 = Fri–Sun (5, 6, 0). Other session numbers are unchanged. */
+/** Live classes: Monday–Saturday. Sunday is never a teaching day. */
+function isTeachingClassDate(dateStr: string): boolean {
+  const dow = weekdayFromSlotDate(dateStr);
+  return dow >= 1 && dow <= 6;
+}
+
+/** Session 2 = Mon–Wed (1–3). Session 3 = Thu–Sat (4–6). Other sessions: any teaching day. */
 function isSlotAllowedForSession(sessionNumber: number, dateStr: string): boolean {
+  if (!isTeachingClassDate(dateStr)) return false;
   if (sessionNumber !== 2 && sessionNumber !== 3) return true;
   const dow = weekdayFromSlotDate(dateStr);
-  if (sessionNumber === 2) return dow >= 1 && dow <= 4;
-  return dow === 0 || dow >= 5;
+  if (sessionNumber === 2) return dow >= 1 && dow <= 3;
+  return dow >= 4 && dow <= 6;
 }
 
 function sessionDayRestrictedError(sessionNumber: number): string {
-  if (sessionNumber === 2) return "Session 2 can only be booked on Monday–Thursday.";
-  if (sessionNumber === 3) return "Session 3 can only be booked on Friday–Sunday.";
+  if (sessionNumber === 2) return "Session 2 can only be booked on Monday–Wednesday.";
+  if (sessionNumber === 3) return "Session 3 can only be booked on Thursday–Saturday.";
   return "This session cannot be booked on the selected day.";
 }
+
+const SUNDAY_CLASS_NOT_ALLOWED = "Live classes cannot be scheduled on Sunday.";
 
 function createSupabaseClient() {
   const url = Deno.env.get("SUPABASE_URL");
@@ -98,22 +106,20 @@ serve(async (req: Request) => {
       );
     }
 
-    // Weekend booking WINDOW guard (Saturday or Sunday in VN time)
-    // Admins bypass this check via is_admin flag
+    // Learner booking WINDOW: Sunday only (VN time). Admins bypass via is_admin.
     if (!is_admin) {
       const today = new Date();
       if (!isLearnerBookingWindowOpen(today)) {
         const todayDayOfWeek = getVnDayOfWeek(today);
         debugLog.push(`[3] Rejected: today is not a booking window day (day=${todayDayOfWeek})`);
         return new Response(
-          JSON.stringify({ error: "Booking is only open on Saturdays and Sundays. Please come back on the weekend.", code: "NOT_BOOKING_DAY", debug: debugLog }),
+          JSON.stringify({ error: "Booking is only open on Sundays.", code: "NOT_BOOKING_DAY", debug: debugLog }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      // NOTE: Booking window is weekend-only, but learners can book any day the teacher is available.
     }
 
-    debugLog.push("[3] Weekend booking window check passed" + (is_admin ? " (admin bypass)" : ""));
+    debugLog.push("[3] Sunday booking window check passed" + (is_admin ? " (admin bypass)" : ""));
 
     // Learner lifecycle guard: only active (or legacy paused) enrollments may book
     const { data: learnerEnrollment, error: enrollStatusErr } = await supabaseClient
@@ -190,9 +196,17 @@ serve(async (req: Request) => {
       );
     }
 
-    debugLog.push("[5] Session available — checking session weekday rule");
+    debugLog.push("[5] Session available — checking teaching-day and session weekday rules");
 
-    if (!is_admin && !isSlotAllowedForSession(sessionData.session_number, date)) {
+    if (!isTeachingClassDate(date)) {
+      debugLog.push(`[5b] Rejected: Sunday class date=${date}`);
+      return new Response(
+        JSON.stringify({ error: SUNDAY_CLASS_NOT_ALLOWED, code: "SUNDAY_CLASS_NOT_ALLOWED", debug: debugLog }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (!isSlotAllowedForSession(sessionData.session_number, date)) {
       debugLog.push(`[5b] Rejected: session ${sessionData.session_number} cannot book date=${date}`);
       return new Response(
         JSON.stringify({ error: sessionDayRestrictedError(sessionData.session_number), code: "SESSION_DAY_RESTRICTED", debug: debugLog }),
@@ -200,7 +214,7 @@ serve(async (req: Request) => {
       );
     }
 
-    debugLog.push("[5b] Session weekday check passed" + (is_admin ? " (admin bypass)" : ""));
+    debugLog.push("[5b] Session weekday check passed");
     debugLog.push("[5c] Checking existing schedule");
 
     const { data: existingSchedule, error: schedLookupErr } = await supabaseClient

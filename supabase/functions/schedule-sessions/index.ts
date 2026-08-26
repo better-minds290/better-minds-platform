@@ -39,12 +39,29 @@ function preferredTimeToHours(preferred: string): { startHour: number; endHour: 
   }
 }
 
+function isSchedulerDayAllowed(sessionNumber: number, dayOfWeek: number): boolean {
+  if (dayOfWeek === 0) return false;
+  if (sessionNumber === 2) return dayOfWeek >= 1 && dayOfWeek <= 3;
+  if (sessionNumber === 3) return dayOfWeek >= 4 && dayOfWeek <= 6;
+  return dayOfWeek >= 1 && dayOfWeek <= 6;
+}
+
+function clampToAllowedClassDate(date: Date, sessionNumber: number): Date {
+  const d = new Date(date);
+  for (let i = 0; i < 8; i++) {
+    if (isSchedulerDayAllowed(sessionNumber, getVnDayOfWeek(d))) return d;
+    d.setDate(d.getDate() - 1);
+  }
+  return d;
+}
+
 function findBestSlot(
   slots: TimeSlot[],
   preferredRange: { startHour: number; endHour: number },
   deadlineDate: Date,
   minDaysFromNow: number,
-  sessionDurationHours: number
+  sessionDurationHours: number,
+  sessionNumber: number
 ): { scheduledAt: Date; dayOfWeek: number } | null {
   const now = new Date();
   const maxDate = new Date(deadlineDate);
@@ -54,6 +71,7 @@ function findBestSlot(
 
   for (let d = new Date(minDate); d <= maxDate; d.setDate(d.getDate() + 1)) {
     const dayOfWeek = getVnDayOfWeek(d);
+    if (!isSchedulerDayAllowed(sessionNumber, dayOfWeek)) continue;
 
     for (const slot of slots) {
       if (slot.dayOfWeek !== dayOfWeek) continue;
@@ -246,7 +264,7 @@ serve(async (req: Request) => {
       let bestAssignment: { teacherId: string; teacherName: string; scheduledAt: Date; meetingLink: string | null } | null = null;
 
       for (const candidate of candidates) {
-        const slot = findBestSlot(candidate.slots, preferredRange, deadlineDate, minDaysFromNow, 1);
+        const slot = findBestSlot(candidate.slots, preferredRange, deadlineDate, minDaysFromNow, 1, session.session_number);
 
         if (slot) {
           const teacherData = teachers.find((t) => t.id === candidate.teacherId);
@@ -298,10 +316,11 @@ serve(async (req: Request) => {
         const fallbackTeacherId = candidates[0].teacherId;
         const fallbackTeacher = teachers.find((t) => t.id === fallbackTeacherId);
         const fallbackTeacherName = fallbackTeacher?.full_name || "Unknown";
+        const fallbackDate = clampToAllowedClassDate(deadlineDate, session.session_number);
 
         const updatePayload: Record<string, unknown> = {
           teacher_id: fallbackTeacherId,
-          scheduled_at: deadlineDate.toISOString(),
+          scheduled_at: fallbackDate.toISOString(),
         };
         if (fallbackTeacher?.default_meeting_link) {
           updatePayload.meeting_link = fallbackTeacher.default_meeting_link;
@@ -318,7 +337,7 @@ serve(async (req: Request) => {
             session_type: session.session_type,
             teacher_id: fallbackTeacherId,
             teacher_name: fallbackTeacherName,
-            scheduled_at: deadlineDate.toISOString(),
+            scheduled_at: fallbackDate.toISOString(),
             status: "no_slot_fallback_to_deadline",
           });
         } else {

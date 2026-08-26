@@ -17,6 +17,22 @@ function getVnDayOfWeek(date: Date): number {
   return vnDate.getUTCDay();
 }
 
+function isSchedulerDayAllowed(sessionNumber: number, dayOfWeek: number): boolean {
+  if (dayOfWeek === 0) return false;
+  if (sessionNumber === 2) return dayOfWeek >= 1 && dayOfWeek <= 3;
+  if (sessionNumber === 3) return dayOfWeek >= 4 && dayOfWeek <= 6;
+  return dayOfWeek >= 1 && dayOfWeek <= 6;
+}
+
+function clampToAllowedClassDate(date: Date, sessionNumber: number): Date {
+  const d = new Date(date);
+  for (let i = 0; i < 8; i++) {
+    if (isSchedulerDayAllowed(sessionNumber, getVnDayOfWeek(d))) return d;
+    d.setDate(d.getDate() - 1);
+  }
+  return d;
+}
+
 function parseTime(timeStr: string): { hour: number; min: number } {
   const [h, m] = timeStr.split(":").map(Number);
   return { hour: h, min: m };
@@ -179,6 +195,7 @@ serve(async (req: Request) => {
 
       for (let d = new Date(minS2); d <= s2Deadline; d.setDate(d.getDate() + 1)) {
         const dayOfWeek = getVnDayOfWeek(d);
+        if (dayOfWeek < 1 || dayOfWeek > 3) continue;
         for (const slot of slots) {
           if (slot.dayOfWeek !== dayOfWeek) continue;
           const overlapStart = Math.max(slot.startHour + slot.startMin / 60, preferredRange.startHour);
@@ -196,7 +213,7 @@ serve(async (req: Request) => {
     }
 
     if (!scheduledAt2 && s2Deadline) {
-      scheduledAt2 = s2Deadline.toISOString();
+      scheduledAt2 = clampToAllowedClassDate(s2Deadline, 2).toISOString();
     }
 
     const { data: avail3 } = await supabaseAdmin
@@ -219,6 +236,7 @@ serve(async (req: Request) => {
 
       for (let d = new Date(minS3); d <= s3Deadline; d.setDate(d.getDate() + 1)) {
         const dayOfWeek = getVnDayOfWeek(d);
+        if (dayOfWeek < 4 || dayOfWeek > 6) continue;
         for (const slot of slots) {
           if (slot.dayOfWeek !== dayOfWeek) continue;
           const overlapStart = Math.max(slot.startHour + slot.startMin / 60, preferredRange.startHour);
@@ -236,7 +254,7 @@ serve(async (req: Request) => {
     }
 
     if (!scheduledAt3 && s3Deadline) {
-      scheduledAt3 = s3Deadline.toISOString();
+      scheduledAt3 = clampToAllowedClassDate(s3Deadline, 3).toISOString();
     }
 
     // Sprint stays LOCKED (not active!) until Saturday unlock

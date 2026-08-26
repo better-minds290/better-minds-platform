@@ -9,6 +9,7 @@ import {
   toLocalDateStr,
   vietnamTodayStr,
 } from "@/lib/datetime";
+import { isSlotAllowedForSession, isTeachingClassDate } from "@/lib/scheduling";
 
 interface Learner {
   id: string;
@@ -300,6 +301,7 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
       const now = new Date();
       const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000);
       const futureSlots = mappedSlots.filter((slot) => {
+        if (!isTeachingClassDate(slot.date)) return false;
         const slotEnd = new Date(`${slot.date}T${slot.end_time}+07:00`);
         return slotEnd.getTime() > vnNow.getTime();
       });
@@ -427,6 +429,17 @@ export default function AdminAssignLearner({ preselectedLearnerId }: AdminAssign
 
   const handleAssign = async () => {
     if (!selectedLearner || !selectedSession || !selectedSlot) return;
+
+    if (!isTeachingClassDate(selectedSlot.date)) {
+      showToast("error", t("booking.sundayClassNotAllowed"));
+      return;
+    }
+    const sessionNum = learnerSessions.find((s) => s.id === selectedSession)?.session_number;
+    if (sessionNum && !isSlotAllowedForSession(sessionNum, selectedSlot.date)) {
+      showToast("error", sessionNum === 2 ? t("booking.session2DayRestricted") : t("booking.session3DayRestricted"));
+      return;
+    }
+
     setAssigning(true);
 
     console.log(`[AdminAssign] Assign: learner=${selectedLearner.id}, session=${selectedSession}, status=${selectedSessionData?.status}, teacher=${selectedSlot.teacher_id}, date=${selectedSlot.date}`);

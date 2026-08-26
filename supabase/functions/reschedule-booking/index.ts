@@ -13,8 +13,7 @@ function getVnDayOfWeek(date: Date): number {
 }
 
 function isLearnerBookingWindowOpen(date: Date): boolean {
-  const vnDay = getVnDayOfWeek(date);
-  return vnDay === 6 || vnDay === 0;
+  return getVnDayOfWeek(date) === 0;
 }
 
 function getVnMonth(date: Date): number {
@@ -32,19 +31,28 @@ function weekdayFromSlotDate(dateStr: string): number {
   return new Date(`${dateStr}T12:00:00+07:00`).getUTCDay();
 }
 
-/** Session 2 = Mon–Thu (1–4). Session 3 = Fri–Sun (5, 6, 0). Other session numbers are unchanged. */
+/** Live classes: Monday–Saturday. Sunday is never a teaching day. */
+function isTeachingClassDate(dateStr: string): boolean {
+  const dow = weekdayFromSlotDate(dateStr);
+  return dow >= 1 && dow <= 6;
+}
+
+/** Session 2 = Mon–Wed (1–3). Session 3 = Thu–Sat (4–6). Other sessions: any teaching day. */
 function isSlotAllowedForSession(sessionNumber: number, dateStr: string): boolean {
+  if (!isTeachingClassDate(dateStr)) return false;
   if (sessionNumber !== 2 && sessionNumber !== 3) return true;
   const dow = weekdayFromSlotDate(dateStr);
-  if (sessionNumber === 2) return dow >= 1 && dow <= 4;
-  return dow === 0 || dow >= 5;
+  if (sessionNumber === 2) return dow >= 1 && dow <= 3;
+  return dow >= 4 && dow <= 6;
 }
 
 function sessionDayRestrictedError(sessionNumber: number): string {
-  if (sessionNumber === 2) return "Session 2 can only be booked on Monday–Thursday.";
-  if (sessionNumber === 3) return "Session 3 can only be booked on Friday–Sunday.";
+  if (sessionNumber === 2) return "Session 2 can only be booked on Monday–Wednesday.";
+  if (sessionNumber === 3) return "Session 3 can only be booked on Thursday–Saturday.";
   return "This session cannot be booked on the selected day.";
 }
+
+const SUNDAY_CLASS_NOT_ALLOWED = "Live classes cannot be scheduled on Sunday.";
 
 function normalizeTimeHHMM(time: string): string {
   if (!time) return "00:00";
@@ -121,13 +129,17 @@ serve(async (req: Request) => {
 
       if (!bypass_saturday_check) {
         if (!isLearnerBookingWindowOpen(new Date())) {
-          return new Response(JSON.stringify({ error: "Reschedule is only open on Saturdays and Sundays.", code: "NOT_BOOKING_DAY" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          return new Response(JSON.stringify({ error: "Reschedule is only open on Sundays.", code: "NOT_BOOKING_DAY" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
       }
 
       const { data: sessionData, error: sessionErr } = await supabaseClient.from("sprint_sessions").select("id, status, session_number, sprint_id, teacher_id, class_id").eq("id", sprint_session_id).maybeSingle();
       if (sessionErr || !sessionData) return new Response(JSON.stringify({ error: "Session not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       if (sessionData.status !== "in_progress" && sessionData.status !== "active") return new Response(JSON.stringify({ error: "Only booked sessions can be rescheduled" }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      if (!isTeachingClassDate(new_date)) {
+        return new Response(JSON.stringify({ error: SUNDAY_CLASS_NOT_ALLOWED, code: "SUNDAY_CLASS_NOT_ALLOWED" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
 
       if (!isSlotAllowedForSession(sessionData.session_number, new_date)) {
         return new Response(JSON.stringify({ error: sessionDayRestrictedError(sessionData.session_number), code: "SESSION_DAY_RESTRICTED" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -245,6 +257,16 @@ serve(async (req: Request) => {
 
       console.log(`[ADMIN-ASSIGN][${REQ}] Session found: status=${sessionData.status}, class_id=${sessionData.class_id || "none"}`);
       await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "1-session-lookup", status: "ok", detail: `Session found: status=${sessionData.status}, class_id=${sessionData.class_id || "none"}`, data: { sprint_id: sessionData.sprint_id, session_number: sessionData.session_number } });
+
+      if (!isTeachingClassDate(dt)) {
+        await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "1b-sunday-class", status: "error", detail: `Sunday class date rejected: ${dt}` });
+        return new Response(JSON.stringify({ error: SUNDAY_CLASS_NOT_ALLOWED, code: "SUNDAY_CLASS_NOT_ALLOWED" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      if (!isSlotAllowedForSession(sessionData.session_number, dt)) {
+        await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "1b-session-day", status: "error", detail: `Session ${sessionData.session_number} cannot use date ${dt}` });
+        return new Response(JSON.stringify({ error: sessionDayRestrictedError(sessionData.session_number), code: "SESSION_DAY_RESTRICTED" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
 
       // Step 2: Clean up old enrollment if this session was previously assigned to a different class
       if (sessionData.class_id) {

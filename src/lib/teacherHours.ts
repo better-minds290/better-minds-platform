@@ -446,6 +446,7 @@ export function buildUnavailableDateSet(rows: TeacherUnavailableDateRow[]): Set<
 /**
  * Expand active recurring availability patterns onto concrete current-week occurrences.
  * Anchor `date` is ignored; `day_of_week` drives which weekday in the range gets a slot.
+ * Sunday (day_of_week 0) is not a teaching-availability day and is skipped.
  */
 export function expandWeeklyAvailabilityOccurrences(
   patterns: TeacherAvailabilityRow[],
@@ -465,7 +466,7 @@ export function expandWeeklyAvailabilityOccurrences(
     if (!pattern.start_time || !pattern.end_time) return;
 
     const dow = patternDayOfWeek(pattern);
-    if (dow === null) return;
+    if (dow === null || dow === 0) return;
 
     const occurrenceDate = dowToDate.get(dow);
     if (!occurrenceDate) return;

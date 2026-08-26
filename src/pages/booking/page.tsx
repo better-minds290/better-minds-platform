@@ -14,6 +14,7 @@ import {
   toLocalDateStr,
   vietnamTodayStr,
 } from "@/lib/datetime";
+import { isSlotAllowedForSession, isTeachingClassDate } from "@/lib/scheduling";
 
 interface TeacherSlot {
   availability_id: string;
@@ -61,19 +62,6 @@ function formatDuration(mins: number): string {
 function normalizeTime(time: string): string {
   if (!time) return "00:00";
   return time.length > 5 ? time.substring(0, 5) : time;
-}
-
-/** Weekday of a YYYY-MM-DD slot date in Vietnam (UTC+7). Noon avoids UTC midnight shifting the day. */
-function weekdayFromSlotDate(dateStr: string): number {
-  return new Date(`${dateStr}T12:00:00+07:00`).getUTCDay();
-}
-
-/** Session 2 = Mon–Thu (1–4). Session 3 = Fri–Sun (5, 6, 0). Other session numbers are unchanged. */
-function isSlotAllowedForSession(sessionNumber: number, dateStr: string): boolean {
-  if (sessionNumber !== 2 && sessionNumber !== 3) return true;
-  const dow = weekdayFromSlotDate(dateStr);
-  if (sessionNumber === 2) return dow >= 1 && dow <= 4;
-  return dow === 0 || dow >= 5;
 }
 
 function getWeekLabel(weekStart: Date): string {
@@ -410,9 +398,11 @@ function BookingCalendarContent() {
       });
 
       // One bookable option per teacher per date+time (keep distinct teachers; drop duplicate source rows)
+      // Sunday slots are never offered for new bookings; keep the learner's own historical Sunday class.
       const seenSlotKeys = new Set<string>();
       const uniqueSlots: TeacherSlot[] = [];
       for (const s of mappedSlots) {
+        if (!isTeachingClassDate(s.date) && !s.is_my_booking && !s.is_completed) continue;
         const key = `${s.teacher_id}-${s.date}-${s.start_time}`;
         if (seenSlotKeys.has(key)) continue;
         seenSlotKeys.add(key);
@@ -489,6 +479,10 @@ function BookingCalendarContent() {
       showToast("error", sessionNum === 2 ? t("booking.session2DayRestricted") : t("booking.session3DayRestricted"));
       return;
     }
+    if (!isTeachingClassDate(slot.date)) {
+      showToast("error", t("booking.sundayClassNotAllowed"));
+      return;
+    }
     if (!isLearnerBookingWindowOpen()) {
       showToast("error", t("booking.saturdayOnlyToast"));
       return;
@@ -501,6 +495,10 @@ function BookingCalendarContent() {
     const sessionNum = bookableSessions.find((s) => s.id === bookingSessionId)?.session_number;
     if (sessionNum && !isSlotAllowedForSession(sessionNum, confirmModal.date)) {
       showToast("error", sessionNum === 2 ? t("booking.session2DayRestricted") : t("booking.session3DayRestricted"));
+      return;
+    }
+    if (!isTeachingClassDate(confirmModal.date)) {
+      showToast("error", t("booking.sundayClassNotAllowed"));
       return;
     }
     setBookingInProgress(true);
@@ -685,10 +683,11 @@ function BookingCalendarContent() {
           };
         });
 
-      // One option per teacher per date+time
+      // One option per teacher per date+time — never offer Sunday as a new class date
       const seenSlotKeys = new Set<string>();
       const uniqueSlots: TeacherSlot[] = [];
       for (const s of mappedSlots) {
+        if (!isTeachingClassDate(s.date)) continue;
         const key = `${s.teacher_id}-${s.date}-${s.start_time}`;
         if (seenSlotKeys.has(key)) continue;
         seenSlotKeys.add(key);
@@ -783,6 +782,10 @@ function BookingCalendarContent() {
     const rescheduleSessionNum = rescheduleTarget.class_id ? classToSessionNumber[rescheduleTarget.class_id] : 0;
     if (rescheduleSessionNum && !isSlotAllowedForSession(rescheduleSessionNum, selectedNewSlot.date)) {
       showToast("error", rescheduleSessionNum === 2 ? t("booking.session2DayRestricted") : t("booking.session3DayRestricted"));
+      return;
+    }
+    if (!isTeachingClassDate(selectedNewSlot.date)) {
+      showToast("error", t("booking.sundayClassNotAllowed"));
       return;
     }
     setRescheduleInProgress(true);

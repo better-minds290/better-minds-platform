@@ -8,6 +8,7 @@ import {
   toLocalDateStr,
   vietnamTodayStr,
 } from "@/lib/datetime";
+import { isTeachingClassDate } from "@/lib/scheduling";
 
 interface CalendarSlot {
   slot_type: "booked" | "available" | "unavailable";
@@ -273,6 +274,9 @@ export default function AdminCalendar() {
         const isUnavailable = unavailableSet.has(`${a.teacher_id}|${a.date}`);
         const schedKey = `${a.teacher_id}|${a.date}|${st}`;
         const sched = schedLookup.get(schedKey);
+
+        // Sunday is not a teaching-availability day. Keep booked Sunday history only.
+        if (!isTeachingClassDate(a.date) && !sched) return;
 
         if (sched) {
           // Booked slot

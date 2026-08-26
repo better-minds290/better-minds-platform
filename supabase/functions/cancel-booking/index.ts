@@ -12,8 +12,7 @@ function getVnDayOfWeek(date: Date): number {
 }
 
 function isLearnerBookingWindowOpen(date: Date): boolean {
-  const vnDay = getVnDayOfWeek(date);
-  return vnDay === 6 || vnDay === 0;
+  return getVnDayOfWeek(date) === 0;
 }
 
 serve(async (req: Request) => {
@@ -45,12 +44,11 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: false, error: "Thiếu thông tin: sprint_session_id, class_id" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Weekend cancel guard (Saturday or Sunday, server-side)
-    // Admins bypass this check via is_admin flag
+    // Learner cancel window: Sunday only (VN time). Admins bypass via is_admin.
     if (!is_admin) {
       if (!isLearnerBookingWindowOpen(new Date())) {
         return new Response(
-          JSON.stringify({ success: false, error: "Chỉ có thể hủy lịch vào Thứ 7 và Chủ Nhật. Vui lòng quay lại vào cuối tuần.", code: "NOT_BOOKING_DAY" }),
+          JSON.stringify({ success: false, error: "Chỉ có thể hủy lịch vào Chủ Nhật.", code: "NOT_BOOKING_DAY" }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }

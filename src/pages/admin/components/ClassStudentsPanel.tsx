@@ -8,6 +8,7 @@ import {
   toLocalDateStr,
   vietnamTodayStr,
 } from "@/lib/datetime";
+import { isSlotAllowedForSession, isTeachingClassDate } from "@/lib/scheduling";
 
 interface EnrolledStudent {
   student_id: string;
@@ -295,6 +296,7 @@ export default function ClassStudentsPanel({
       const now = new Date();
       const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000);
       const futureSlots = mapped.filter((slot) => {
+        if (!isTeachingClassDate(slot.date)) return false;
         const slotEnd = new Date(`${slot.date}T${slot.end_time}:00+07:00`);
         return slotEnd.getTime() > vnNow.getTime();
       });
@@ -358,6 +360,16 @@ export default function ClassStudentsPanel({
     if (!reassignTarget || !selectedSlotId) return;
     const slot = availableSlots.find((s) => s.availability_id === selectedSlotId);
     if (!slot) return;
+
+    if (!isTeachingClassDate(slot.date)) {
+      setError(t("booking.sundayClassNotAllowed"));
+      return;
+    }
+    const sessionNum = reassignTarget.session_numbers[0];
+    if (sessionNum && !isSlotAllowedForSession(sessionNum, slot.date)) {
+      setError(sessionNum === 2 ? t("booking.session2DayRestricted") : t("booking.session3DayRestricted"));
+      return;
+    }
 
     // The session to move = the student's session currently in THIS class
     const sessionId = reassignTarget.session_ids[0];
