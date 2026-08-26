@@ -6,9 +6,35 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-function getVnDayOfWeek(date: Date): number {
-  const vnDate = new Date(date.getTime() + 7 * 60 * 60 * 1000);
-  return vnDate.getUTCDay();
+/** Must match learner_attendance.type CHECK (`late_sprint`, `absent_session`). */
+const ATTENDANCE_TYPE_LATE_SPRINT = "late_sprint";
+
+const WAITING_NEXT_SPRINT_STATUSES = new Set(["pending", "locked"]);
+const ALREADY_UNLOCKED_STATUSES = new Set(["active", "completed", "expired"]);
+
+function vnShift(date: Date): Date {
+  return new Date(date.getTime() + 7 * 60 * 60 * 1000);
+}
+
+function vnYmd(date: Date): string {
+  return vnShift(date).toISOString().slice(0, 10);
+}
+
+function addDaysYmd(ymd: string, days: number): string {
+  const d = new Date(`${ymd}T12:00:00+07:00`);
+  d.setTime(d.getTime() + days * 24 * 60 * 60 * 1000);
+  return vnYmd(d);
+}
+
+/**
+ * First Saturday on or after completed_at in Asia/Ho_Chi_Minh (UTC+7, no DST).
+ * Sunday completion rolls to the following Saturday.
+ * Keep in sync with src/lib/sprintUnlockLate.ts getExpectedSprintUnlockSaturday.
+ */
+function getExpectedSprintUnlockSaturday(completedAt: Date): string {
+  const weekday = vnShift(completedAt).getUTCDay();
+  const daysUntilSaturday = (6 - weekday + 7) % 7;
+  return addDaysYmd(vnYmd(completedAt), daysUntilSaturday);
 }
 
 serve(async (req: Request) => {
@@ -22,8 +48,8 @@ serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    const today = new Date();
-    const vnDay = getVnDayOfWeek(today);
+    const now = new Date();
+    const todayYmd = vnYmd(now);
 
     // ── Fetch operational enrollments (active; legacy paused until migrated) ──
     // Completed enrollments are intentionally excluded.
@@ -56,7 +82,6 @@ serve(async (req: Request) => {
     const results: Array<{ learner_id: string; sprint_number: number; enrollment_id: string; recorded: boolean; skipped: string | null }> = [];
 
     for (const enrollment of activeEnrollments) {
-      // Get the latest completed sprint
       const { data: completedSprints } = await supabaseClient
         .from("learning_sprints")
         .select("id, sprint_number, completed_at")
@@ -67,8 +92,29 @@ serve(async (req: Request) => {
 
       const lastCompleted = completedSprints?.[0];
 
-      // Check if there's a next sprint that is locked/pending
-      const nextSprintNumber = lastCompleted ? lastCompleted.sprint_number + 1 : 1;
+      if (!lastCompleted) {
+        results.push({
+          learner_id: enrollment.learner_id,
+          sprint_number: 0,
+          enrollment_id: enrollment.id,
+          recorded: false,
+          skipped: "no_completed_sprint",
+        });
+        continue;
+      }
+
+      if (!lastCompleted.completed_at) {
+        results.push({
+          learner_id: enrollment.learner_id,
+          sprint_number: lastCompleted.sprint_number,
+          enrollment_id: enrollment.id,
+          recorded: false,
+          skipped: "missing_completed_at",
+        });
+        continue;
+      }
+
+      const nextSprintNumber = lastCompleted.sprint_number + 1;
 
       const { data: nextSprint } = await supabaseClient
         .from("learning_sprints")
@@ -78,7 +124,6 @@ serve(async (req: Request) => {
         .maybeSingle();
 
       if (!nextSprint) {
-        // No next sprint generated yet — check if course is complete
         const { data: course } = await supabaseClient
           .from("courses")
           .select("total_sprints")
@@ -97,7 +142,6 @@ serve(async (req: Request) => {
           continue;
         }
 
-        // Sprint not generated yet — this is unusual but skip
         results.push({
           learner_id: enrollment.learner_id,
           sprint_number: nextSprintNumber,
@@ -108,8 +152,7 @@ serve(async (req: Request) => {
         continue;
       }
 
-      if (nextSprint.status === "active" || nextSprint.status === "completed") {
-        // Already active or completed — no issue
+      if (ALREADY_UNLOCKED_STATUSES.has(nextSprint.status)) {
         results.push({
           learner_id: enrollment.learner_id,
           sprint_number: nextSprintNumber,
@@ -120,25 +163,36 @@ serve(async (req: Request) => {
         continue;
       }
 
-      // Sprint is locked/pending — check if it's past the unlock window
-      // Sprint unlocks on Saturday. If it's Sunday or later, they're late.
-      // Only skip on Saturday (vnDay=6) when they still have the day to unlock.
-
-      if (vnDay === 6) {
-        // Saturday — they still have today to unlock
+      if (!WAITING_NEXT_SPRINT_STATUSES.has(nextSprint.status)) {
         results.push({
           learner_id: enrollment.learner_id,
           sprint_number: nextSprintNumber,
           enrollment_id: enrollment.id,
           recorded: false,
-          skipped: "still_saturday",
+          skipped: "not_waiting",
         });
         continue;
       }
 
-      // It's Sunday or later — learner is late!
+      const expectedSaturday = getExpectedSprintUnlockSaturday(new Date(lastCompleted.completed_at));
+      const expectedSunday = addDaysYmd(expectedSaturday, 1);
+      const lateFromYmd = addDaysYmd(expectedSaturday, 2);
 
-      // Get learner and course names
+      if (todayYmd < lateFromYmd) {
+        const skipped =
+          todayYmd === expectedSaturday || todayYmd === expectedSunday
+            ? "unlock_weekend"
+            : "before_unlock_weekend";
+        results.push({
+          learner_id: enrollment.learner_id,
+          sprint_number: nextSprintNumber,
+          enrollment_id: enrollment.id,
+          recorded: false,
+          skipped,
+        });
+        continue;
+      }
+
       const { data: learnerProfile } = await supabaseClient
         .from("profiles")
         .select("full_name")
@@ -154,16 +208,17 @@ serve(async (req: Request) => {
       const learnerName = learnerProfile?.full_name || "Học viên";
       const courseName = courseData?.name || "Khóa học";
 
-      // Check if already recorded (deduplication)
-      const { data: existing } = await supabaseClient
+      // Dedup: only an existing UNRESOLVED late_sprint for this learner + sprint blocks a new row.
+      const { data: existingUnresolved } = await supabaseClient
         .from("learner_attendance")
         .select("id")
         .eq("learner_id", enrollment.learner_id)
         .eq("related_sprint_id", nextSprint.id)
-        .eq("type", "sprint_unlock_late")
-        .maybeSingle();
+        .eq("type", ATTENDANCE_TYPE_LATE_SPRINT)
+        .eq("resolved", false)
+        .limit(1);
 
-      if (existing) {
+      if (existingUnresolved && existingUnresolved.length > 0) {
         results.push({
           learner_id: enrollment.learner_id,
           sprint_number: nextSprintNumber,
@@ -174,7 +229,6 @@ serve(async (req: Request) => {
         continue;
       }
 
-      // Record the late attendance
       const { error: insertErr } = await supabaseClient
         .from("learner_attendance")
         .insert({
@@ -182,23 +236,22 @@ serve(async (req: Request) => {
           enrollment_id: enrollment.id,
           related_sprint_id: nextSprint.id,
           sprint_number: nextSprintNumber,
-          type: "sprint_unlock_late",
-          date: new Date().toISOString().split("T")[0],
+          type: ATTENDANCE_TYPE_LATE_SPRINT,
+          date: todayYmd,
           learner_name: learnerName,
           course_name: courseName,
           resolved: false,
-          created_at: new Date().toISOString(),
+          created_at: now.toISOString(),
         });
 
       if (!insertErr) {
-        // Notify learner
         await supabaseClient.from("notifications").insert({
           user_id: enrollment.learner_id,
           title: `Bạn Đã Trễ Mở Khóa Sprint ${nextSprintNumber}!`,
           message: `Sprint ${nextSprintNumber} đáng lẽ được mở khóa vào Thứ 7. Hãy vào kiểm tra và mở khóa ngay để tiếp tục học!`,
           type: "system",
           is_read: false,
-          created_at: new Date().toISOString(),
+          created_at: now.toISOString(),
           action_url: `/dashboard`,
         });
 

@@ -269,16 +269,16 @@ function sprint(n: number, status: string, id = `sp-${n}`): AdminSprintRow {
   );
 }
 
-// 7. Attendance sprint_unlock_late → FC NOT available
+// 7. Attendance late_sprint → FC NOT available
 {
   assertEqual(
     shouldShowAttendanceForceComplete({
-      type: "sprint_unlock_late",
+      type: "late_sprint",
       related_sprint_id: "sp-2",
       resolved: false,
     }),
     false,
-    "FC hidden for sprint_unlock_late"
+    "FC hidden for late_sprint"
   );
   assertEqual(
     shouldShowAttendanceForceComplete({

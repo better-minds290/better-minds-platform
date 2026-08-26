@@ -3,6 +3,13 @@ import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
 import { formatVietnamDate } from "@/lib/datetime";
+import {
+  ATTENDANCE_TYPE_ABSENT_SESSION,
+  ATTENDANCE_TYPE_LATE_SPRINT,
+  countUnresolvedLateSprint,
+  isLateSprintAttendance,
+  shouldShowLateSprintUnlock,
+} from "@/lib/sprintUnlockLate";
 
 interface AttendanceRecord {
   id: string;
@@ -25,7 +32,7 @@ interface AttendanceRecord {
   created_at: string;
 }
 
-type FilterType = "all" | "sprint_unlock_late" | "absent_session";
+type FilterType = "all" | typeof ATTENDANCE_TYPE_LATE_SPRINT | typeof ATTENDANCE_TYPE_ABSENT_SESSION;
 type ResolvedFilter = "all" | "unresolved" | "resolved";
 
 export default function AdminLearnerAttendance() {
@@ -257,8 +264,8 @@ export default function AdminLearnerAttendance() {
   }, [records, typeFilter, resolvedFilter, search]);
 
   const unresolvedCount = records.filter((r) => !r.resolved).length;
-  const sprintLateCount = records.filter((r) => r.type === "sprint_unlock_late" && !r.resolved).length;
-  const noShowCount = records.filter((r) => r.type === "absent_session" && !r.resolved).length;
+  const sprintLateCount = countUnresolvedLateSprint(records);
+  const noShowCount = records.filter((r) => r.type === ATTENDANCE_TYPE_ABSENT_SESSION && !r.resolved).length;
 
   const formatDate = (dateStr: string) => {
     try {
@@ -274,24 +281,24 @@ export default function AdminLearnerAttendance() {
 
   const getTypeLabel = (type: string) => {
     switch (type) {
-      case "sprint_unlock_late": return t("auth.adminAttendanceTypeSprintLate");
-      case "absent_session": return t("auth.adminAttendanceTypeAbsentSession");
+      case ATTENDANCE_TYPE_LATE_SPRINT: return t("auth.adminAttendanceTypeSprintLate");
+      case ATTENDANCE_TYPE_ABSENT_SESSION: return t("auth.adminAttendanceTypeAbsentSession");
       default: return type;
     }
   };
 
   const getTypeIcon = (type: string) => {
     switch (type) {
-      case "sprint_unlock_late": return "ri-run-line";
-      case "absent_session": return "ri-user-unfollow-line";
+      case ATTENDANCE_TYPE_LATE_SPRINT: return "ri-run-line";
+      case ATTENDANCE_TYPE_ABSENT_SESSION: return "ri-user-unfollow-line";
       default: return "ri-error-warning-line";
     }
   };
 
   const getTypeColor = (type: string) => {
     switch (type) {
-      case "sprint_unlock_late": return "bg-secondary-100 text-secondary-700 border-secondary-200";
-      case "absent_session": return "bg-accent-100 text-accent-700 border-accent-200";
+      case ATTENDANCE_TYPE_LATE_SPRINT: return "bg-secondary-100 text-secondary-700 border-secondary-200";
+      case ATTENDANCE_TYPE_ABSENT_SESSION: return "bg-accent-100 text-accent-700 border-accent-200";
       default: return "bg-background-100 text-foreground-600 border-background-200";
     }
   };
@@ -425,9 +432,9 @@ export default function AdminLearnerAttendance() {
           <p className="text-xs text-foreground-500 mt-0.5">{t("auth.adminAttendanceStatsUnresolvedHint")}</p>
         </div>
         <div
-          onClick={() => { setTypeFilter("sprint_unlock_late"); setResolvedFilter("unresolved"); }}
+          onClick={() => { setTypeFilter(ATTENDANCE_TYPE_LATE_SPRINT); setResolvedFilter("unresolved"); }}
           className={`p-4 rounded-xl border cursor-pointer transition-all duration-200 ${
-            typeFilter === "sprint_unlock_late"
+            typeFilter === ATTENDANCE_TYPE_LATE_SPRINT
               ? "border-secondary-300 bg-secondary-50/60"
               : "border-background-200/70 bg-background-50 hover:border-secondary-200"
           }`}
@@ -442,9 +449,9 @@ export default function AdminLearnerAttendance() {
           <p className="text-xs text-foreground-500 mt-0.5">{t("auth.adminAttendanceStatsSprintLateHint")}</p>
         </div>
         <div
-          onClick={() => { setTypeFilter("absent_session"); setResolvedFilter("unresolved"); }}
+          onClick={() => { setTypeFilter(ATTENDANCE_TYPE_ABSENT_SESSION); setResolvedFilter("unresolved"); }}
           className={`p-4 rounded-xl border cursor-pointer transition-all duration-200 ${
-            typeFilter === "absent_session"
+            typeFilter === ATTENDANCE_TYPE_ABSENT_SESSION
               ? "border-accent-300 bg-accent-50/60"
               : "border-background-200/70 bg-background-50 hover:border-accent-200"
           }`}
@@ -474,7 +481,7 @@ export default function AdminLearnerAttendance() {
         </div>
 
         <div className="flex items-center gap-1.5 px-1 py-1 rounded-full bg-background-100">
-          {(["all", "sprint_unlock_late", "absent_session"] as FilterType[]).map((f) => (
+          {(["all", ATTENDANCE_TYPE_LATE_SPRINT, ATTENDANCE_TYPE_ABSENT_SESSION] as FilterType[]).map((f) => (
             <button
               key={f}
               onClick={() => setTypeFilter(f)}
@@ -484,7 +491,7 @@ export default function AdminLearnerAttendance() {
                   : "text-foreground-500 hover:text-foreground-700"
               }`}
             >
-              {f === "all" ? t("auth.adminAttendanceFilterAll") : f === "sprint_unlock_late" ? t("auth.adminAttendanceFilterSprintLate") : t("auth.adminAttendanceFilterAbsent")}
+              {f === "all" ? t("auth.adminAttendanceFilterAll") : f === ATTENDANCE_TYPE_LATE_SPRINT ? t("auth.adminAttendanceFilterSprintLate") : t("auth.adminAttendanceFilterAbsent")}
             </button>
           ))}
         </div>
@@ -566,9 +573,9 @@ export default function AdminLearnerAttendance() {
                     </td>
                     <td className="px-4 py-3">
                       <span className="text-xs text-foreground-500 whitespace-nowrap">
-                        {record.type === "sprint_unlock_late" && record.sprint_number
+                        {isLateSprintAttendance(record.type) && record.sprint_number
                           ? t("auth.adminAttendanceSprintNum", { num: record.sprint_number })
-                          : record.type === "absent_session" && record.session_number
+                          : record.type === ATTENDANCE_TYPE_ABSENT_SESSION && record.session_number
                             ? t("auth.adminAttendanceDetailSeparator", {
                                 session: t("auth.adminAttendanceSessionNum", { num: record.session_number }),
                                 sprint: record.sprint_number ? t("auth.adminAttendanceSprintNum", { num: record.sprint_number }) : "",
@@ -597,7 +604,7 @@ export default function AdminLearnerAttendance() {
                     <td className="px-4 py-3 text-center">
                       {!record.resolved ? (
                         <div className="flex items-center justify-center gap-1.5">
-                          {record.type === "sprint_unlock_late" && record.related_sprint_id && (
+                          {shouldShowLateSprintUnlock(record) && (
                             <button
                               onClick={() => handleUnlockSprint(record.id, record.related_sprint_id, record.learner_name)}
                               disabled={unlocking === record.id || resolving === record.id || forceCompleting === record.id || reopening === record.id}
@@ -612,7 +619,7 @@ export default function AdminLearnerAttendance() {
                               {t("auth.adminAttendanceActionUnlock")}
                             </button>
                           )}
-                          {record.type === "absent_session" && record.related_session_id && (
+                          {record.type === ATTENDANCE_TYPE_ABSENT_SESSION && record.related_session_id && (
                             <button
                               onClick={() => handleReopen(record.id, record.learner_name)}
                               disabled={reopening === record.id || resolving === record.id || forceCompleting === record.id || unlocking === record.id}
@@ -627,7 +634,7 @@ export default function AdminLearnerAttendance() {
                               {t("auth.adminAttendanceActionReopen")}
                             </button>
                           )}
-                          {record.type === "absent_session" && record.related_sprint_id && (
+                          {record.type === ATTENDANCE_TYPE_ABSENT_SESSION && record.related_sprint_id && (
                             <button
                               onClick={() => handleForceComplete(record.id, record.related_sprint_id!)}
                               disabled={forceCompleting === record.id || resolving === record.id || reopening === record.id || unlocking === record.id}
