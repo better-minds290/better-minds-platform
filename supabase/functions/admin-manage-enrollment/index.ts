@@ -1,6 +1,14 @@
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  notifyTeacherUnavailableCancellationAfterSuccess,
+  parseCancelReason,
+  resolveReplyTo,
+  shouldSendTeacherUnavailableCancellationEmail,
+  buildLearnerCancelInAppNotification,
+  type CancellationEmailSnapshot,
+} from "../_shared/email.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,12 +55,23 @@ serve(async (req: Request) => {
     }
 
     const body = await req.json();
-    const { action, class_id, student_id, new_class_id } = body;
+    const { action, class_id, student_id, new_class_id, reason: rawReason } = body;
 
     if (!action || !class_id || !student_id) {
       return new Response(JSON.stringify({ success: false, error: "Missing required fields: action, class_id, student_id" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
       });
+    }
+
+    let cancelReason: "teacher_unavailable" | "other" = "other";
+    if (action === "cancel") {
+      const parsed = parseCancelReason(rawReason);
+      if (!parsed.ok) {
+        return new Response(JSON.stringify({ success: false, error: parsed.error }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+      }
+      cancelReason = parsed.reason;
     }
 
     if (action === "reassign" && !new_class_id) {
@@ -90,7 +109,7 @@ serve(async (req: Request) => {
     // Get learner name
     const { data: learnerProfile } = await supabaseAdmin
       .from("profiles")
-      .select("full_name")
+      .select("full_name, email")
       .eq("id", student_id)
       .maybeSingle();
     const learnerName = learnerProfile?.full_name || "Learner";
@@ -116,13 +135,15 @@ serve(async (req: Request) => {
 
     let learnerSessionIds: string[] = [];
     let sessionNumbers: number[] = [];
+    let sprintNumbers: number[] = [];
+    let courseName: string | null = null;
 
     if (sprintSessions && sprintSessions.length > 0) {
       const sprintIds = [...new Set(sprintSessions.map((s) => s.sprint_id))];
 
       const { data: sprints } = await supabaseAdmin
         .from("learning_sprints")
-        .select("id, enrollment_id")
+        .select("id, enrollment_id, sprint_number")
         .in("id", sprintIds);
 
       if (sprints) {
@@ -130,7 +151,7 @@ serve(async (req: Request) => {
 
         const { data: enrollments } = await supabaseAdmin
           .from("enrollments")
-          .select("id, learner_id")
+          .select("id, learner_id, course_id")
           .in("id", enrollmentIds)
           .eq("learner_id", student_id);
 
@@ -139,12 +160,22 @@ serve(async (req: Request) => {
           const learnerSprintIds = new Set(
             sprints.filter((s) => learnerEnrollmentIds.has(s.enrollment_id)).map((s) => s.id)
           );
-          learnerSessionIds = sprintSessions
-            .filter((ss) => learnerSprintIds.has(ss.sprint_id))
-            .map((ss) => ss.id);
-          sessionNumbers = sprintSessions
-            .filter((ss) => learnerSprintIds.has(ss.sprint_id))
-            .map((ss) => ss.session_number);
+          const learnerSessions = sprintSessions.filter((ss) => learnerSprintIds.has(ss.sprint_id));
+          learnerSessionIds = learnerSessions.map((ss) => ss.id);
+          sessionNumbers = learnerSessions.map((ss) => ss.session_number);
+          sprintNumbers = sprints
+            .filter((s) => learnerSprintIds.has(s.id) && typeof s.sprint_number === "number")
+            .map((s) => s.sprint_number as number);
+
+          const courseId = enrollments[0].course_id;
+          if (courseId) {
+            const { data: course } = await supabaseAdmin
+              .from("courses")
+              .select("name")
+              .eq("id", courseId)
+              .maybeSingle();
+            courseName = course?.name || null;
+          }
         }
       }
     }
@@ -152,6 +183,27 @@ serve(async (req: Request) => {
     const sessionLabel = sessionNumbers.length > 0
       ? sessionNumbers.map((n) => `Buổi ${n}`).join(", ")
       : "";
+
+    const { data: scheduleRow } = await supabaseAdmin
+      .from("class_schedules")
+      .select("id, date, start_time, end_time")
+      .eq("class_id", class_id)
+      .maybeSingle();
+
+    const cancellationSnapshot: CancellationEmailSnapshot = {
+      learnerId: student_id,
+      learnerName,
+      learnerEmail: learnerProfile?.email || null,
+      teacherName: oldTeacherName,
+      sprintSessionId: [...learnerSessionIds].sort()[0] || "none",
+      classScheduleId: scheduleRow?.id || `class:${class_id}`,
+      sessionNumber: sessionNumbers.length > 0 ? [...sessionNumbers].sort((a, b) => a - b).join(", ") : "",
+      sprintNumber: sprintNumbers.length > 0 ? [...new Set(sprintNumbers)].sort((a, b) => a - b).join(", ") : null,
+      courseName,
+      classDate: scheduleRow?.date || null,
+      startTime: scheduleRow?.start_time || null,
+      endTime: scheduleRow?.end_time || null,
+    };
 
     // ── CANCEL ACTION ──
     if (action === "cancel") {
@@ -215,14 +267,38 @@ serve(async (req: Request) => {
       }
 
       // Notify learner
+      const learnerNotice = buildLearnerCancelInAppNotification({
+        reason: cancelReason,
+        className: classData.name || "",
+        teacherName: oldTeacherName,
+        sessionLabel: sessionLabel || undefined,
+      });
       await supabaseAdmin.from("notifications").insert({
         user_id: student_id,
-        title: "Admin Đã Hủy Buổi Học Của Bạn",
-        message: `Admin đã hủy đăng ký của bạn khỏi lớp "${classData.name}" với ${oldTeacherName}${sessionLabel ? ` (${sessionLabel})` : ""}. Vui lòng đặt lịch lại.`,
+        title: learnerNotice.title,
+        message: learnerNotice.message,
         type: "class",
         is_read: false,
-        action_url: "/booking",
+        action_url: learnerNotice.actionUrl,
       }).maybeSingle();
+
+      if (
+        shouldSendTeacherUnavailableCancellationEmail({
+          source: "admin_cancel",
+          reason: cancelReason,
+        })
+      ) {
+        try {
+          await notifyTeacherUnavailableCancellationAfterSuccess({
+            supabase: supabaseAdmin,
+            resendApiKey: Deno.env.get("RESEND_API_KEY") ?? "",
+            replyTo: resolveReplyTo({ envValue: Deno.env.get("EMAIL_REPLY_TO") }),
+            snapshot: cancellationSnapshot,
+          });
+        } catch (emailErr) {
+          console.error("[admin-manage-enrollment] cancellation email failed (non-fatal):", emailErr);
+        }
+      }
 
       return new Response(JSON.stringify({
         success: true,

@@ -1,6 +1,10 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  notifyAdminClassAssignmentAfterSuccess,
+  resolveReplyTo,
+} from "../_shared/email.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -317,6 +321,7 @@ serve(async (req: Request) => {
       const createdClassIds: string[] = [];
       const createdScheduleIds: string[] = [];
       const maxStudents = 2;
+      let addingToGroupClass = false;
 
       const canReuseSchedule = existingSchedule && existingSchedule.status !== "completed";
 
@@ -348,6 +353,8 @@ serve(async (req: Request) => {
             await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "3-class-full", status: "error", detail: `Class full: ${enrollmentCount}/${maxStudents}` });
             return new Response(JSON.stringify({ error: "Lớp học đã đầy, vui lòng chọn khung giờ khác" }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
           }
+
+          addingToGroupClass = (enrollmentCount || 0) >= 1;
 
           const { data: enrolled, error: enrollErr } = await supabaseClient.from("class_enrollments").insert({ class_id: classId, student_id: learner_id }).select("id").single();
 
@@ -582,6 +589,27 @@ serve(async (req: Request) => {
 
         console.log(`[ADMIN-ASSIGN][${REQ}] Notifications sent (sessionLabel=${sessionLabel})`);
       } catch { /* non-fatal */ }
+
+      try {
+        await notifyAdminClassAssignmentAfterSuccess({
+          supabase: supabaseClient,
+          resendApiKey: Deno.env.get("RESEND_API_KEY") ?? "",
+          replyTo: resolveReplyTo({ envValue: Deno.env.get("EMAIL_REPLY_TO") }),
+          learnerId: learner_id,
+          teacherId: tid,
+          sprintSessionId: sprint_session_id,
+          classId,
+          scheduleId,
+          fallbackDate: dt,
+          fallbackStart: st,
+          fallbackEnd: et,
+          durationMinutes: duration_minutes || null,
+          addedToExistingClass: addingToGroupClass,
+        });
+        console.log(`[ADMIN-ASSIGN][${REQ}] Assignment emails attempted (non-fatal)`);
+      } catch (emailErr) {
+        console.error(`[ADMIN-ASSIGN][${REQ}] Assignment emails failed (non-fatal):`, emailErr);
+      }
 
       console.log(`[ADMIN-ASSIGN][${REQ}] ALL DONE — success`);
       await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "done", status: "ok", detail: "Complete success" });

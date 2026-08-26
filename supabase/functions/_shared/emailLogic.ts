@@ -86,6 +86,14 @@ export function normalizeOptionalEmail(value: string | null | undefined): string
   return trimmed ? trimmed : undefined;
 }
 
+/** Lightweight recipient check. Empty, whitespace-only, and obviously malformed addresses are rejected. */
+export function isValidRecipientEmail(value: string | null | undefined): boolean {
+  const email = normalizeOptionalEmail(value);
+  if (!email) return false;
+  if (email.length > 254) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 export function resolveReplyTo(args: {
   override?: string | null;
   envValue?: string | null;
@@ -165,6 +173,14 @@ export interface EmailStore {
     metadata: Record<string, unknown> | null;
     now: Date;
   }): Promise<{ row: EmailEventRow; conflict: boolean }>;
+  insertSkipped(input: {
+    idempotency_key: string;
+    template: string;
+    user_id: string | null;
+    to_email: string;
+    metadata: Record<string, unknown> | null;
+    now: Date;
+  }): Promise<{ row: EmailEventRow; conflict: boolean }>;
   /**
    * Atomic compare-and-set. Must not succeed for two callers on the same row.
    * failed → only status=failed; stale_queued → status=queued AND updated_at <= staleBefore.
@@ -209,12 +225,85 @@ export type SendTransactionalResult =
       eventId: string;
     }
   | {
+      ok: true;
+      already_processed: false;
+      status: "skipped";
+      reason: string;
+      eventId: string;
+    }
+  | {
       ok: false;
       already_processed: false;
       status: "failed" | "error";
       error: string;
       eventId: string | null;
     };
+
+/**
+ * Persist an intentional skip (missing/invalid recipient). Never throws.
+ * Existing rows are left unchanged so a prior send/fail is not overwritten.
+ */
+export async function recordSkippedEmail(
+  store: EmailStore,
+  input: {
+    idempotencyKey: string;
+    template: string;
+    to?: string | null;
+    userId?: string | null;
+    metadata?: Record<string, unknown> | null;
+    reason: string;
+    now?: Date;
+  }
+): Promise<SendTransactionalResult> {
+  try {
+    const now = input.now ?? new Date();
+    const existing = await store.findByIdempotencyKey(input.idempotencyKey);
+    if (existing) {
+      return {
+        ok: true,
+        already_processed: true,
+        status: existing.status,
+        reason: existing.status === "skipped" ? "already_skipped" : "already_exists",
+        eventId: existing.id,
+      };
+    }
+
+    const inserted = await store.insertSkipped({
+      idempotency_key: input.idempotencyKey,
+      template: input.template,
+      user_id: input.userId ?? null,
+      to_email: (input.to || "").trim(),
+      metadata: { ...(input.metadata || {}), skip_reason: input.reason },
+      now,
+    });
+
+    if (inserted.conflict) {
+      return {
+        ok: true,
+        already_processed: true,
+        status: inserted.row.status,
+        reason: "already_exists",
+        eventId: inserted.row.id,
+      };
+    }
+
+    return {
+      ok: true,
+      already_processed: false,
+      status: "skipped",
+      reason: input.reason,
+      eventId: inserted.row.id,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      already_processed: false,
+      status: "error",
+      error: err instanceof Error ? err.message : String(err),
+      eventId: null,
+    };
+  }
+}
 
 function toExisting(row: EmailEventRow): { status: EmailEventStatus; updatedAt: Date } {
   return { status: row.status, updatedAt: new Date(row.updated_at) };

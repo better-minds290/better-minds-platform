@@ -80,6 +80,35 @@ async function run() {
       return { row, conflict: false };
     }
 
+    async insertSkipped(input: {
+      idempotency_key: string;
+      template: string;
+      user_id: string | null;
+      to_email: string;
+      metadata: Record<string, unknown> | null;
+      now: Date;
+    }): Promise<{ row: EmailEventRow; conflict: boolean }> {
+      const existing = this.rows.get(input.idempotency_key);
+      if (existing) return { row: existing, conflict: true };
+      const iso = input.now.toISOString();
+      const row: EmailEventRow = {
+        id: `evt-${++idSeq}`,
+        idempotency_key: input.idempotency_key,
+        template: input.template,
+        user_id: input.user_id,
+        to_email: input.to_email,
+        status: "skipped",
+        provider_id: null,
+        error: null,
+        metadata: input.metadata,
+        created_at: iso,
+        sent_at: null,
+        updated_at: iso,
+      };
+      this.rows.set(input.idempotency_key, row);
+      return { row, conflict: false };
+    }
+
     async claimForSend(id: string, spec: EmailClaimSpec, now: Date): Promise<boolean> {
       for (const row of this.rows.values()) {
         if (row.id !== id) continue;
@@ -239,7 +268,8 @@ async function run() {
   {
     const rendered = renderEmailTemplate("missed_booking", {
       learner_name: `<img src=x onerror="alert(1)">`,
-      late_sessions: "Session 2 & Session 3",
+      late_sessions_vi: "Buổi 2 & Buổi 3",
+      late_sessions_en: "Session 2 & Session 3",
       sprint_number: 2,
       course_name: `English <script>alert('xss')</script>`,
     });
@@ -424,6 +454,9 @@ async function run() {
         throw new Error("db down");
       },
       async insertQueued() {
+        throw new Error("db down");
+      },
+      async insertSkipped() {
         throw new Error("db down");
       },
       async claimForSend() {

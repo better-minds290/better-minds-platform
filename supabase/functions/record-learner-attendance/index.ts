@@ -1,5 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  ABSENCE_LIMIT,
+  buildAbsenceInAppNotification,
+  countAuthoritativeAbsences,
+  notifyAbsenceRecordedAfterSuccess,
+  resolveReplyTo,
+  shouldSendAbsenceRecordedEmail,
+} from "../_shared/email.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -182,9 +190,7 @@ serve(async (req: Request) => {
         );
       }
 
-      const ABSENCE_LIMIT = 5;
-
-      // Idempotent: only count/notify on first not-absent → absent transition
+      // Idempotent: only count/notify/email on first not-absent → absent transition
       const { data: existingAttendance } = await supabaseClient
         .from("session_attendance")
         .select("id, status")
@@ -258,7 +264,7 @@ serve(async (req: Request) => {
           .eq("id", session_id);
       }
 
-      const { error: attErr } = await supabaseClient
+      const { data: insertedAtt, error: attErr } = await supabaseClient
         .from("learner_attendance")
         .insert({
           learner_id: student_id,
@@ -276,44 +282,74 @@ serve(async (req: Request) => {
           note: "Giáo viên đánh dấu vắng học",
           resolved: false,
           created_at: new Date().toISOString(),
-        });
+        })
+        .select("id")
+        .single();
 
       if (attErr) {
         console.error("Failed to insert learner_attendance:", attErr);
       }
 
+      const learnerAttendanceId = insertedAtt?.id || null;
+
       // Cumulative absence count for this learner+course (never reset by resolve/reopen/FC)
-      let absenceCount = 1;
-      let countQuery = supabaseClient
+      const { data: absenceRows } = await supabaseClient
         .from("learner_attendance")
-        .select("id", { count: "exact", head: true })
+        .select("id, learner_id, enrollment_id, course_name, type")
         .eq("learner_id", student_id)
         .eq("type", "absent_session");
 
-      if (enrollment_id) {
-        countQuery = countQuery.eq("enrollment_id", enrollment_id);
-      } else if (course_name) {
-        countQuery = countQuery.eq("course_name", course_name);
-      }
+      let absenceCount = countAuthoritativeAbsences(absenceRows || [], {
+        learnerId: student_id,
+        enrollmentId: enrollment_id || null,
+        courseName: course_name || null,
+      });
+      if (absenceCount < 1) absenceCount = 1;
 
-      const { count: absenceTotal } = await countQuery;
-      if (typeof absenceTotal === "number" && absenceTotal > 0) {
-        absenceCount = absenceTotal;
-      }
-
-      const sprintLabel = sprint_number ? ` Sprint ${sprint_number}` : "";
-      const sessionLabel = session_number ? ` Buổi ${session_number}` : "";
-      const courseLabel = course_name ? ` (${course_name})` : "";
+      const notice = buildAbsenceInAppNotification({
+        sprintNumber: sprint_number,
+        sessionNumber: session_number,
+        courseName: course_name,
+        absenceCount,
+        absenceLimit: ABSENCE_LIMIT,
+      });
 
       await supabaseClient.from("notifications").insert({
         user_id: student_id,
-        title: `Bạn Đã Vắng Buổi Học${sprintLabel}${sessionLabel}`,
-        message: `Bạn đã được ghi nhận vắng buổi học này${courseLabel}. Bạn hiện đã vắng ${absenceCount}/${ABSENCE_LIMIT} buổi.`,
+        title: notice.title,
+        message: notice.message,
         type: "system",
         is_read: false,
         created_at: new Date().toISOString(),
         action_url: "/dashboard",
       });
+
+      if (
+        shouldSendAbsenceRecordedEmail({
+          action: "mark_absent",
+          alreadyAbsent: false,
+          learnerAttendanceId,
+        })
+      ) {
+        try {
+          await notifyAbsenceRecordedAfterSuccess({
+            supabase: supabaseClient,
+            resendApiKey: Deno.env.get("RESEND_API_KEY") ?? "",
+            replyTo: resolveReplyTo({ envValue: Deno.env.get("EMAIL_REPLY_TO") }),
+            learnerAttendanceId: learnerAttendanceId!,
+            learnerId: student_id,
+            scheduleId: schedule_id,
+            sessionNumber: session_number,
+            sprintNumber: sprint_number,
+            courseName: course_name || null,
+            absenceCount,
+            absenceLimit: ABSENCE_LIMIT,
+            learnerNameHint: learner_name || null,
+          });
+        } catch (emailErr) {
+          console.error("Absence email failed (non-fatal):", emailErr);
+        }
+      }
 
       return new Response(
         JSON.stringify({

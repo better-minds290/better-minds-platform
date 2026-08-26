@@ -84,6 +84,7 @@ export default function ClassStudentsPanel({
 
   // Cancel state
   const [cancelTarget, setCancelTarget] = useState<EnrolledStudent | null>(null);
+  const [cancelReason, setCancelReason] = useState<"" | "teacher_unavailable" | "other">("");
   const [actioning, setActioning] = useState(false);
 
   const supabase = getSupabase();
@@ -331,7 +332,7 @@ export default function ClassStudentsPanel({
   };
 
   const handleCancel = async () => {
-    if (!cancelTarget) return;
+    if (!cancelTarget || !cancelReason) return;
     setActioning(true);
     try {
       const { data, error: fnErr } = await supabase.functions.invoke("admin-manage-enrollment", {
@@ -339,6 +340,7 @@ export default function ClassStudentsPanel({
           action: "cancel",
           class_id: classId,
           student_id: cancelTarget.student_id,
+          reason: cancelReason,
         },
       });
 
@@ -348,6 +350,7 @@ export default function ClassStudentsPanel({
 
       onSuccess(data.message || t("auth.adminClassCancelSuccess"));
       setCancelTarget(null);
+      setCancelReason("");
       fetchStudents();
     } catch (err: any) {
       setError(err?.message || t("auth.adminClassError"));
@@ -510,7 +513,10 @@ export default function ClassStudentsPanel({
                   {/* Actions */}
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setCancelTarget(student)}
+                      onClick={() => {
+                        setCancelReason("");
+                        setCancelTarget(student);
+                      }}
                       className="flex-1 px-3 py-2 text-xs font-medium text-accent-600 bg-accent-50 hover:bg-accent-100 rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5"
                     >
                       <i className="ri-close-circle-line text-sm"></i>
@@ -536,21 +542,64 @@ export default function ClassStudentsPanel({
         <div className="fixed inset-0 z-[60] flex items-center justify-center">
           <div
             className="absolute inset-0 bg-foreground-950/40 backdrop-blur-sm"
-            onClick={() => !actioning && setCancelTarget(null)}
+            onClick={() => {
+              if (!actioning) {
+                setCancelTarget(null);
+                setCancelReason("");
+              }
+            }}
           ></div>
-          <div className="relative w-full max-w-sm mx-4 bg-background-50 rounded-2xl border border-background-200 shadow-lg p-6 animate-in fade-in zoom-in-95 duration-200">
+          <div className="relative w-full max-w-md mx-4 bg-background-50 rounded-2xl border border-background-200 shadow-lg p-6 animate-in fade-in zoom-in-95 duration-200">
             <div className="w-11 h-11 mx-auto flex items-center justify-center rounded-full bg-accent-100 mb-4">
               <i className="ri-user-unfollow-line text-xl text-accent-500"></i>
             </div>
             <h3 className="text-center font-heading text-base font-semibold text-foreground-950 mb-1.5">
               {t("auth.adminCancelEnrollmentTitle")}
             </h3>
-            <p className="text-center text-sm text-foreground-500 mb-6">
+            <p className="text-center text-sm text-foreground-500 mb-4">
               {t("auth.adminCancelEnrollmentDesc", { student: cancelTarget.student_name, class: className })}
             </p>
+            <fieldset className="mb-5">
+              <legend className="block text-xs font-medium text-foreground-700 mb-2">
+                {t("auth.adminCancelReasonLabel")}
+              </legend>
+              <div className="space-y-2">
+                <label className="flex items-start gap-2.5 p-3 rounded-lg border border-background-200 cursor-pointer hover:bg-background-100">
+                  <input
+                    type="radio"
+                    name="cancel-reason"
+                    value="teacher_unavailable"
+                    checked={cancelReason === "teacher_unavailable"}
+                    onChange={() => setCancelReason("teacher_unavailable")}
+                    disabled={actioning}
+                    className="mt-0.5"
+                  />
+                  <span className="text-sm text-foreground-800">
+                    {t("auth.adminCancelReasonTeacherUnavailable")}
+                  </span>
+                </label>
+                <label className="flex items-start gap-2.5 p-3 rounded-lg border border-background-200 cursor-pointer hover:bg-background-100">
+                  <input
+                    type="radio"
+                    name="cancel-reason"
+                    value="other"
+                    checked={cancelReason === "other"}
+                    onChange={() => setCancelReason("other")}
+                    disabled={actioning}
+                    className="mt-0.5"
+                  />
+                  <span className="text-sm text-foreground-800">
+                    {t("auth.adminCancelReasonOther")}
+                  </span>
+                </label>
+              </div>
+            </fieldset>
             <div className="flex gap-3">
               <button
-                onClick={() => setCancelTarget(null)}
+                onClick={() => {
+                  setCancelTarget(null);
+                  setCancelReason("");
+                }}
                 disabled={actioning}
                 className="flex-1 px-4 py-2.5 text-sm font-medium text-foreground-700 bg-background-100 hover:bg-background-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap disabled:opacity-60"
               >
@@ -558,8 +607,8 @@ export default function ClassStudentsPanel({
               </button>
               <button
                 onClick={handleCancel}
-                disabled={actioning}
-                className="flex-1 px-4 py-2.5 text-sm font-semibold text-background-50 bg-accent-500 hover:bg-accent-600 rounded-lg transition-colors cursor-pointer whitespace-nowrap disabled:opacity-60 flex items-center justify-center gap-2"
+                disabled={actioning || !cancelReason}
+                className="flex-1 px-4 py-2.5 text-sm font-semibold text-background-50 bg-accent-500 hover:bg-accent-600 rounded-lg transition-colors cursor-pointer whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {actioning && (
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>

@@ -1,24 +1,25 @@
 /** All user-facing dates/times on Better Minds are Vietnam time. */
-export const VN_TIMEZONE = "Asia/Ho_Chi_Minh";
+import {
+  VN_TIMEZONE,
+  getVietnamDateParts,
+  vietnamTodayStr,
+} from "../../supabase/functions/_shared/vietnamTime.ts";
+
+export {
+  VN_TIMEZONE,
+  getVietnamDateParts,
+  toVietnamDateStr,
+  vietnamTodayStr,
+  getVietnamDayOfWeek,
+  isLearnerBookingWindowOpen,
+  vietnamMostRecentSundayYmd,
+  hasSundayBookingWindowPassed,
+  teachingWeekRangeAfterSunday,
+  addCalendarDays,
+} from "../../supabase/functions/_shared/vietnamTime.ts";
+export type { VietnamDateParts } from "../../supabase/functions/_shared/vietnamTime.ts";
 
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-const WEEKDAY_TO_INDEX: Record<string, number> = {
-  Sun: 0,
-  Sunday: 0,
-  Mon: 1,
-  Monday: 1,
-  Tue: 2,
-  Tuesday: 2,
-  Wed: 3,
-  Wednesday: 3,
-  Thu: 4,
-  Thursday: 4,
-  Fri: 5,
-  Friday: 5,
-  Sat: 6,
-  Saturday: 6,
-};
 
 export const VN_WEEKDAYS_SHORT = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"] as const;
 
@@ -29,43 +30,6 @@ function parseToDate(input: string | Date): Date {
     return new Date(`${trimmed}T12:00:00+07:00`);
   }
   return new Date(trimmed);
-}
-
-export interface VietnamDateParts {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-  weekday: number;
-}
-
-export function getVietnamDateParts(input: string | Date): VietnamDateParts | null {
-  const date = parseToDate(input);
-  if (Number.isNaN(date.getTime())) return null;
-
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: VN_TIMEZONE,
-    weekday: "short",
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-    hourCycle: "h23",
-  }).formatToParts(date);
-
-  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value;
-  const weekdayName = get("weekday") || "Sun";
-
-  return {
-    year: Number(get("year")),
-    month: Number(get("month")),
-    day: Number(get("day")),
-    hour: Number(get("hour")),
-    minute: Number(get("minute")),
-    weekday: WEEKDAY_TO_INDEX[weekdayName] ?? 0,
-  };
 }
 
 export function formatVietnamDate(
@@ -110,59 +74,6 @@ export function formatVietnamDateTime(
   const date = parseToDate(input);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString(locale, { timeZone: VN_TIMEZONE, ...options });
-}
-
-/** YYYY-MM-DD in Asia/Ho_Chi_Minh. */
-export function toVietnamDateStr(input: string | Date = new Date()): string {
-  const parts = getVietnamDateParts(input);
-  if (!parts) return "";
-  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
-}
-
-export function vietnamTodayStr(now: Date = new Date()): string {
-  return toVietnamDateStr(now);
-}
-
-/** 0=Sun … 6=Sat in Asia/Ho_Chi_Minh. */
-export function getVietnamDayOfWeek(now: Date = new Date()): number {
-  return getVietnamDateParts(now)?.weekday ?? 0;
-}
-
-/** Learner book / reschedule / cancel window: Sunday only (VN time). */
-export function isLearnerBookingWindowOpen(now: Date = new Date()): boolean {
-  return getVietnamDayOfWeek(now) === 0;
-}
-
-/**
- * YYYY-MM-DD of the most recent Sunday in Vietnam.
- * If `now` is Sunday, that is today — the current booking window, which has not ended.
- */
-export function vietnamMostRecentSundayYmd(now: Date = new Date()): string {
-  const today = vietnamTodayStr(now);
-  const dow = getVietnamDayOfWeek(now);
-  return addCalendarDays(today, -dow);
-}
-
-/**
- * True Mon–Sat VN: the Sunday booking window for the current teaching week has ended.
- * False on Sunday: learners can still book, so do not mark Late.
- */
-export function hasSundayBookingWindowPassed(now: Date = new Date()): boolean {
-  return getVietnamDayOfWeek(now) !== 0;
-}
-
-/** Teaching week (Mon–Sat) that follows a booking Sunday. */
-export function teachingWeekRangeAfterSunday(sundayYmd: string): { start: string; end: string } {
-  return {
-    start: addCalendarDays(sundayYmd, 1),
-    end: addCalendarDays(sundayYmd, 6),
-  };
-}
-
-export function addCalendarDays(yyyyMmDd: string, days: number): string {
-  const date = parseToDate(yyyyMmDd);
-  date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
-  return toVietnamDateStr(date);
 }
 
 export function calendarDiffDays(fromYmd: string, toYmd: string): number {
