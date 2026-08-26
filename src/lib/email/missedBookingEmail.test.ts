@@ -182,7 +182,7 @@ const SAT_SEP_05 = new Date("2026-09-05T18:00:00+07:00");
 const SUN_SEP_06 = new Date("2026-09-06T12:00:00+07:00");
 const MON_SEP_07 = new Date("2026-09-07T07:00:00+07:00");
 
-const SERVICE_KEY = "service-role-secret-key";
+const CRON_SECRET = "test-missed-booking-cron-secret";
 
 function profile(overrides: Partial<MissedBookingProfile> = {}): MissedBookingProfile {
   return {
@@ -775,65 +775,91 @@ async function run() {
   assertEqual(parseMissedBookingRequestBody({}).dryRun, false, "19c: empty");
   assertEqual(parseMissedBookingRequestBody(null).dryRun, false, "19c: null");
 
-  // 20. unauthorized invocation rejected
+  // 20. cron secret required; JWT / missing / wrong secret rejected
   assertEqual(
     isTrustedMissedBookingCaller({
-      authorizationHeader: "Bearer user-jwt-token",
-      serviceRoleKey: SERVICE_KEY,
+      cronSecretHeader: null,
+      expectedCronSecret: CRON_SECRET,
     }),
     false,
-    "20: user jwt rejected"
+    "20: missing cron secret rejected"
   );
   assertEqual(
     guardMissedBookingRequest({
       method: "POST",
-      authorizationHeader: "Bearer user-jwt-token",
-      serviceRoleKey: SERVICE_KEY,
+      cronSecretHeader: null,
+      expectedCronSecret: CRON_SECRET,
     }),
     { ok: false, status: 403, error: "Forbidden" },
-    "20: user jwt 403"
+    "20: missing cron secret 403"
   );
   assertEqual(
     guardMissedBookingRequest({
       method: "POST",
-      authorizationHeader: "Bearer anon-public-key",
-      serviceRoleKey: SERVICE_KEY,
+      cronSecretHeader: "",
+      expectedCronSecret: CRON_SECRET,
     }),
     { ok: false, status: 403, error: "Forbidden" },
-    "20: anon 403"
+    "20: empty cron header 403"
   );
   assertEqual(
     guardMissedBookingRequest({
       method: "POST",
-      authorizationHeader: null,
-      serviceRoleKey: SERVICE_KEY,
+      cronSecretHeader: "wrong-cron-secret",
+      expectedCronSecret: CRON_SECRET,
     }),
     { ok: false, status: 403, error: "Forbidden" },
-    "20: missing auth 403"
+    "20: incorrect cron secret 403"
   );
+  {
+    const incorrect = guardMissedBookingRequest({
+      method: "POST",
+      cronSecretHeader: "wrong-cron-secret",
+      expectedCronSecret: CRON_SECRET,
+    });
+    assert(!JSON.stringify(incorrect).includes(CRON_SECRET), "20: response must not leak expected secret");
+    assert(!JSON.stringify(incorrect).includes("wrong-cron-secret"), "20: response must not leak provided secret");
+  }
   assertEqual(
     guardMissedBookingRequest({
       method: "POST",
-      authorizationHeader: `Bearer ${SERVICE_KEY}`,
-      serviceRoleKey: "",
+      cronSecretHeader: CRON_SECRET,
+      expectedCronSecret: "",
     }),
     { ok: false, status: 403, error: "Forbidden" },
-    "20: empty secret fail-closed"
+    "20: empty expected secret fail-closed"
   );
   assertEqual(
     guardMissedBookingRequest({
       method: "POST",
-      authorizationHeader: `Bearer ${SERVICE_KEY}`,
-      serviceRoleKey: SERVICE_KEY,
+      cronSecretHeader: `Bearer ${CRON_SECRET}`,
+      expectedCronSecret: CRON_SECRET,
+    }),
+    { ok: false, status: 403, error: "Forbidden" },
+    "20: bearer-wrapped cron secret rejected"
+  );
+  assertEqual(
+    isTrustedMissedBookingCaller({
+      cronSecretHeader: CRON_SECRET,
+      expectedCronSecret: CRON_SECRET,
+    }),
+    true,
+    "20: correct cron secret trusted"
+  );
+  assertEqual(
+    guardMissedBookingRequest({
+      method: "POST",
+      cronSecretHeader: CRON_SECRET,
+      expectedCronSecret: CRON_SECRET,
     }),
     { ok: true },
-    "20: service role allowed"
+    "20: correct cron secret allowed"
   );
   assertEqual(
     guardMissedBookingRequest({
       method: "GET",
-      authorizationHeader: `Bearer ${SERVICE_KEY}`,
-      serviceRoleKey: SERVICE_KEY,
+      cronSecretHeader: CRON_SECRET,
+      expectedCronSecret: CRON_SECRET,
     }),
     { ok: false, status: 405, error: "Method not allowed" },
     "20: GET rejected"

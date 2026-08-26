@@ -4,7 +4,7 @@
  * Dedicated scanner: after Sunday booking closes, email learners whose
  * Admin Learners S2 and/or S3 is operationally Late.
  *
- * Service-role / scheduled invocation only. Safe to rerun (idempotent).
+ * Cron-secret / scheduled invocation only. Safe to rerun (idempotent).
  * Does not create a scheduler — invoke later via cron.
  */
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
@@ -17,6 +17,7 @@ import {
 import {
   currentSprintIdsForEnrollments,
   guardMissedBookingRequest,
+  MISSED_BOOKING_CRON_HEADER,
   parseMissedBookingRequestBody,
   type MissedBookingCourse,
   type MissedBookingEnrollment,
@@ -32,7 +33,7 @@ import type {
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -150,8 +151,8 @@ serve(async (req: Request) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     const auth = guardMissedBookingRequest({
       method: req.method,
-      authorizationHeader: req.headers.get("Authorization"),
-      serviceRoleKey,
+      cronSecretHeader: req.headers.get(MISSED_BOOKING_CRON_HEADER),
+      expectedCronSecret: Deno.env.get("MISSED_BOOKING_CRON_SECRET"),
     });
     if (!auth.ok) {
       return json({ error: auth.error }, auth.status);

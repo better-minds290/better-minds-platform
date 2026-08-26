@@ -1,0 +1,6 @@
+# Per-function Edge Function settings.
+# Only notify-missed-booking disables gateway JWT checks (cron cannot send a JWT).
+# All other functions keep the default verify_jwt = true.
+
+[functions.notify-missed-booking]
+verify_jwt = false

@@ -7,7 +7,6 @@
  */
 import {
   isSendEmailAuthExemptMethod,
-  isTrustedSendEmailCaller,
   isValidRecipientEmail,
   recordSkippedEmail,
   sendTransactionalEmail,
@@ -30,7 +29,42 @@ import {
 import { selectCurrentAdminSprint } from "./adminSprintSelection.ts";
 import { hasSundayBookingWindowPassed, vietnamMostRecentSundayYmd } from "./vietnamTime.ts";
 
-export { isSendEmailAuthExemptMethod, isTrustedSendEmailCaller as isTrustedMissedBookingCaller };
+export { isSendEmailAuthExemptMethod };
+
+/** Cron / scheduled callers send this header. Must match MISSED_BOOKING_CRON_SECRET. */
+export const MISSED_BOOKING_CRON_HEADER = "x-cron-secret";
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const encoder = new TextEncoder();
+  const aa = encoder.encode(a);
+  const bb = encoder.encode(b);
+  const len = Math.max(aa.length, bb.length);
+  let diff = aa.length ^ bb.length;
+  for (let i = 0; i < len; i++) {
+    const av = i < aa.length ? aa[i] : 0;
+    const bv = i < bb.length ? bb[i] : 0;
+    diff |= av ^ bv;
+  }
+  return diff === 0;
+}
+
+/**
+ * notify-missed-booking may only be invoked with the dedicated cron secret.
+ * User JWTs, service-role JWTs, empty secrets, and header junk are rejected.
+ */
+export function isTrustedMissedBookingCaller(args: {
+  cronSecretHeader: string | null | undefined;
+  expectedCronSecret: string | null | undefined;
+}): boolean {
+  const expected = args.expectedCronSecret?.trim() || "";
+  if (!expected) return false;
+  const provided = args.cronSecretHeader ?? "";
+  if (!provided) return false;
+  if (/[\r\n\0]/.test(provided)) return false;
+  const token = provided.trim();
+  if (!token) return false;
+  return timingSafeEqual(token, expected);
+}
 
 const OPERATIONAL_ENROLLMENT_STATUSES = new Set(["active", "paused"]);
 
@@ -151,12 +185,12 @@ export function parseMissedBookingRequestBody(body: unknown): { dryRun: boolean 
 
 export function guardMissedBookingRequest(args: {
   method: string | null | undefined;
-  authorizationHeader: string | null | undefined;
-  serviceRoleKey: string | null | undefined;
+  cronSecretHeader: string | null | undefined;
+  expectedCronSecret: string | null | undefined;
 }): { ok: true } | { ok: false; status: number; error: string } {
-  if (!isTrustedSendEmailCaller({
-    authorizationHeader: args.authorizationHeader,
-    serviceRoleKey: args.serviceRoleKey,
+  if (!isTrustedMissedBookingCaller({
+    cronSecretHeader: args.cronSecretHeader,
+    expectedCronSecret: args.expectedCronSecret,
   })) {
     return { ok: false, status: 403, error: "Forbidden" };
   }
