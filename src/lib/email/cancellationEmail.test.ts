@@ -244,7 +244,9 @@ async function run() {
     assertEqual(payloads.length, 1, "1: provider once");
     assertEqual(payloads[0].to, ["binh@example.com"], "1: learner only");
     assertEqual((await store.findByIdempotencyKey(KEY))?.template, "class_cancelled_teacher_unavailable", "1: stored template");
-    assertIncludes(payloads[0].html, "unexpected schedule conflict", "1: teacher unavailable meaning");
+    assertIncludes(payloads[0].html, "your teacher is unavailable", "1: teacher unavailable meaning");
+    assertNotIncludes(payloads[0].subject, "makeup available", "1: subject does not guarantee makeup");
+    assertEqual(payloads[0].subject, "Class cancelled — You can request a makeup class", "1: english subject");
     assertIncludes(payloads[0].html, "Binh", "1: learner name");
     assertIncludes(payloads[0].html, "Mai Teacher", "1: teacher name");
     assertNotIncludes(payloads[0].html, "learner-a", "11: no other learner id");
@@ -319,7 +321,7 @@ async function run() {
       { now: NOW, replyTo: "hello@betterminds.org" }
     );
     assertEqual(payloads[0].reply_to, "hello@betterminds.org", "8: Reply-To on payload");
-    assertIncludes(payloads[0].html, "Reply to this email", "8: reply copy when configured");
+    assertIncludes(payloads[0].html, "Please reply to this email to request one", "8: reply copy when configured");
     assertNotIncludes(payloads[0].html, "Contact Better Minds Admin", "8: not the fallback copy");
   }
 
@@ -328,8 +330,8 @@ async function run() {
     const { provider, payloads } = mockProvider();
     await deliverTeacherUnavailableCancellationEmail({ store, provider }, snapshot(), { now: NOW });
     assertEqual("reply_to" in payloads[0], false, "9: Reply-To omitted when missing");
-    assertIncludes(payloads[0].html, "Contact Better Minds Admin", "9: fallback copy");
-    assertNotIncludes(payloads[0].html, "Reply to this email", "9: does not claim replies are monitored");
+    assertIncludes(payloads[0].html, "Please contact Better Minds Admin to request a makeup class", "9: fallback copy");
+    assertNotIncludes(payloads[0].html, "Please reply to this email to request one", "9: does not claim replies are monitored");
   }
 
   {
@@ -407,7 +409,9 @@ async function run() {
     assertIncludes(rendered.html, "&lt;img", "16: name escaped");
     assertIncludes(rendered.html, "&amp;", "16: teacher escaped");
     assertIncludes(rendered.html, "&lt;b&gt;", "16: date escaped");
-    assertIncludes(rendered.html, "makeup", "content: makeup offer");
+    assertIncludes(rendered.html, "makeup class", "content: makeup offer");
+    assertNotIncludes(rendered.subject, "makeup available", "content: subject does not guarantee makeup");
+    assertNotIncludes(rendered.html, "Buổi", "content: english only");
   }
 
   {
@@ -422,11 +426,27 @@ async function run() {
       course_name: "English B1",
       reply_to_configured: false,
     });
-    assertIncludes(withSprint.html, "Session 3", "content: session 3");
-    assertIncludes(withSprint.html, "Sprint 2", "content: sprint");
+    assertIncludes(withSprint.html, "Session: 3", "content: session 3");
+    assertIncludes(withSprint.html, "Sprint: 2", "content: sprint");
     assertIncludes(withSprint.html, "English B1", "content: course");
     assertIncludes(withSprint.html, "19:00–20:00", "content: times");
-    assertIncludes(withSprint.html, "Contact Better Minds Admin", "9b: missing reply-to copy");
+    assertIncludes(withSprint.html, "Please contact Better Minds Admin to request a makeup class", "9b: missing reply-to copy");
+    assertNotIncludes(withSprint.html, "Buổi", "9b: english only");
+  }
+
+  {
+    const missing = renderEmailTemplate("class_cancelled_teacher_unavailable", {
+      learner_name: "Binh",
+      teacher_name: "Mai",
+      session_number: "",
+      class_date: "Thu 3 Sep 2026",
+      reply_to_configured: false,
+    });
+    assertNotIncludes(missing.html, "Session:", "missing: no empty session row");
+    assertNotIncludes(missing.html, "Sprint:", "missing: no empty sprint row");
+    assertNotIncludes(missing.html, "Session  with", "missing: no blank session phrase");
+    assertIncludes(missing.html, "Teacher: Mai", "missing: teacher still shown");
+    assertIncludes(missing.html, "Date: Thu 3 Sep 2026", "missing: date still shown");
   }
 
   {

@@ -300,23 +300,23 @@ async function run() {
     sprint_number: 2,
     course_name: "English B1",
   });
-  assertIncludes(rendered.subject, "Nhắc lịch đăng ký — Admin sẽ hỗ trợ xếp lớp", "template: vi subject");
-  assertIncludes(rendered.subject, "Booking reminder — Admin will help arrange your class", "template: en subject");
-  assertNotIncludes(rendered.subject.toLowerCase(), "bỏ lỡ", "template: subject not blame vi");
+  assertEqual(rendered.subject, "Booking missed — Admin will help arrange your class", "template: english subject");
+  assertNotIncludes(rendered.subject, "Nhắc", "template: no vietnamese subject");
   assertNotIncludes(rendered.subject.toLowerCase(), "you missed", "template: subject not blame en");
   assertIncludes(rendered.html, "An Nguyen", "template: name");
-  assertIncludes(rendered.html, "Buổi 2", "template: sessions vi");
   assertIncludes(rendered.html, "Session 2", "template: sessions en");
+  assertNotIncludes(rendered.html, "Buổi", "template: no vietnamese session label");
   assertIncludes(rendered.html, "Sprint 2", "template: sprint");
   assertIncludes(rendered.html, "English B1", "template: course");
-  assertIncludes(rendered.html, "Cửa sổ đăng ký Chủ nhật đã kết thúc", "template: sunday closed vi");
-  assertIncludes(rendered.html, "Sunday booking has closed", "template: sunday closed en");
-  assertIncludes(rendered.html, "Admin sẽ xếp lớp", "template: admin arranges vi");
-  assertIncludes(rendered.html, "Admin will arrange", "template: admin arranges en");
-  assertIncludes(rendered.html, "theo dõi email", "template: watch email vi");
-  assertIncludes(rendered.html, "watch your email", "template: watch email en");
+  assertIncludes(rendered.html, "The Sunday booking window has closed", "template: sunday closed");
+  assertIncludes(rendered.html, "still needs to be scheduled", "template: singular grammar");
+  assertIncludes(rendered.html, "will help find and arrange", "template: admin helps, not guaranteed");
+  assertIncludes(rendered.html, "If a suitable class is arranged, you will receive another email with the class details.", "template: conditional follow-up email");
+  assertNotIncludes(rendered.html, "once your class has been confirmed", "template: no guaranteed confirmation");
+  assertIncludes(rendered.html, "keep an eye on your email", "template: watch email");
   assertNotIncludes(rendered.html.toLowerCase(), "forgot", "template: no shame");
   assertNotIncludes(rendered.html.toLowerCase(), "failed to book", "template: no blame");
+  assertNotIncludes(rendered.html, "Admin will arrange a class for you", "template: no guaranteed arrangement");
 
   // 1. S2 Late only → one email
   {
@@ -334,9 +334,9 @@ async function run() {
     assertEqual(result.learners[0].session2, "late", "1: S2 late");
     assertEqual(result.learners[0].session3, "booked", "1: S3 booked");
     assertEqual(payloads.length, 1, "1: one email");
-    assertIncludes(payloads[0].html, "Buổi 2", "1: lists Buổi 2");
     assertIncludes(payloads[0].html, "Session 2", "1: lists Session 2");
-    assertNotIncludes(payloads[0].html, "Buổi 2 và Buổi 3", "1: not combined vi");
+    assertIncludes(payloads[0].html, "still needs to be scheduled", "1: singular grammar");
+    assertNotIncludes(payloads[0].html, "Buổi", "1: no vietnamese in email");
     assertNotIncludes(payloads[0].html, "Session 2 and Session 3", "1: not combined en");
     assertEqual(store.rows.size, 1, "1: one event");
   }
@@ -356,9 +356,9 @@ async function run() {
     assertEqual(result.learners[0].session2, "booked", "2: S2 booked");
     assertEqual(result.learners[0].session3, "late", "2: S3 late");
     assertEqual(payloads.length, 1, "2: one email");
-    assertIncludes(payloads[0].html, "Buổi 3", "2: lists Buổi 3");
     assertIncludes(payloads[0].html, "Session 3", "2: lists Session 3");
-    assertNotIncludes(payloads[0].html, "Buổi 2 và Buổi 3", "2: not combined vi");
+    assertIncludes(payloads[0].html, "still needs to be scheduled", "2: singular grammar");
+    assertNotIncludes(payloads[0].html, "Buổi", "2: no vietnamese in email");
     assertNotIncludes(payloads[0].html, "Session 2 and Session 3", "2: not combined en");
   }
 
@@ -371,8 +371,10 @@ async function run() {
     assertEqual(result.learners[0].session2, "late", "3: S2 late");
     assertEqual(result.learners[0].session3, "late", "3: S3 late");
     assertEqual(payloads.length, 1, "3: one combined email");
-    assertIncludes(payloads[0].html, "Buổi 2 và Buổi 3", "3: combined sessions vi");
     assertIncludes(payloads[0].html, "Session 2 and Session 3", "3: combined sessions en");
+    assertIncludes(payloads[0].html, "still need to be scheduled", "3: plural grammar");
+    assertNotIncludes(payloads[0].html, "still needs to be scheduled", "3: not singular verb");
+    assertNotIncludes(payloads[0].html, "Buổi", "3: no vietnamese in email");
   }
 
   // 4. both Booked → no email
@@ -739,9 +741,9 @@ async function run() {
     const an = payloads.find((p) => p.html.includes("An Nguyen"));
     const binh = payloads.find((p) => p.html.includes("Binh Tran"));
     assert(!!an && !!binh, "18: both names present");
-    assertIncludes(an!.html, "Buổi 2", "18: An is S2 late vi");
     assertIncludes(an!.html, "Session 2", "18: An is S2 late en");
-    assertNotIncludes(an!.html, "Buổi 2 và Buổi 3", "18: An not combined vi");
+    assertIncludes(an!.html, "still needs to be scheduled", "18: An singular grammar");
+    assertNotIncludes(an!.html, "Buổi", "18: An email english only");
     assertNotIncludes(an!.html, "Session 2 and Session 3", "18: An not combined en");
     assertNotIncludes(an!.html, "Binh Tran", "18: An email has no Binh");
     assertIncludes(binh!.html, "Session 3", "18: Binh is S3 late");

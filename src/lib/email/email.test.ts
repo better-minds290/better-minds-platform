@@ -18,6 +18,8 @@ import {
   EMAIL_TEMPLATE_IDS,
   renderEmailTemplate,
 } from "../../../supabase/functions/_shared/emailTemplates.ts";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 function assertEqual(actual: unknown, expected: unknown, label: string) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -297,6 +299,110 @@ async function run() {
     assertIncludes(assignment.html, "javascript:alert(1)", "9b: link still escaped as text");
     assertNotIncludes(assignment.html, "<b>B</b>", "9b: raw html not injected");
     assertNotIncludes(assignment.html, `href="javascript:`, "9b: javascript href not used");
+  }
+
+  {
+    const singular = renderEmailTemplate("missed_booking", {
+      learner_name: "An",
+      late_sessions_vi: "Buổi 2",
+      late_sessions_en: "Session 2",
+      sprint_number: 1,
+    });
+    assertIncludes(singular.html, "still needs to be scheduled", "grammar: singular verb");
+    assertNotIncludes(singular.html, "()", "grammar: no empty course parens");
+    assertNotIncludes(singular.html, "Buổi", "grammar: no vietnamese session label in email");
+    assertNotIncludes(singular.subject, "Nhắc", "grammar: no vietnamese subject");
+
+    const plural = renderEmailTemplate("missed_booking", {
+      learner_name: "An",
+      late_sessions_vi: "Buổi 2 và Buổi 3",
+      late_sessions_en: "Session 2 and Session 3",
+      sprint_number: 1,
+      course_name: "English B1",
+    });
+    assertIncludes(plural.html, "still need to be scheduled", "grammar: plural verb");
+    assertIncludes(plural.html, "(English B1)", "grammar: course suffix when present");
+    assertNotIncludes(plural.html, "still needs to be scheduled", "grammar: plural does not use singular verb");
+  }
+
+  {
+    const templates: Array<{ id: (typeof EMAIL_TEMPLATE_IDS)[number]; data: Parameters<typeof renderEmailTemplate>[1] }> = [
+      {
+        id: "missed_booking",
+        data: {
+          learner_name: "An",
+          late_sessions_vi: "Buổi 2",
+          late_sessions_en: "Session 2",
+          sprint_number: 1,
+        },
+      },
+      {
+        id: "class_assignment_learner",
+        data: {
+          learner_name: "An",
+          teacher_name: "Mai",
+          session_number: 2,
+          sprint_number: 1,
+          class_date: "Mon 31 Aug 2026",
+          start_time: "18:00",
+          end_time: "19:00",
+        },
+      },
+      {
+        id: "class_assignment_teacher",
+        data: {
+          learner_name: "An",
+          teacher_name: "Mai",
+          session_number: 2,
+          sprint_number: 1,
+          class_date: "Mon 31 Aug 2026",
+          start_time: "18:00",
+          end_time: "19:00",
+          added_to_existing_class: true,
+        },
+      },
+      {
+        id: "absence_recorded",
+        data: {
+          learner_name: "An",
+          session_number: 2,
+          sprint_number: 1,
+          absence_count: 1,
+          absence_limit: 5,
+        },
+      },
+      {
+        id: "class_cancelled_teacher_unavailable",
+        data: {
+          learner_name: "Binh",
+          teacher_name: "Mai",
+          session_number: 2,
+          class_date: "Mon 31 Aug 2026",
+        },
+      },
+    ];
+    for (const item of templates) {
+      const rendered = renderEmailTemplate(item.id as "missed_booking", item.data as Parameters<typeof renderEmailTemplate>[1] as never);
+      const text = rendered.subject + rendered.html;
+      assertNotIncludes(text, 'lang="vi"', `${item.id}: no vi lang block`);
+      assertNotIncludes(text, "Nhắc", `${item.id}: no vietnamese reminder copy`);
+      assertNotIncludes(text, "Chào", `${item.id}: no vietnamese greeting`);
+      assertNotIncludes(text, "Buổi", `${item.id}: no vietnamese session word`);
+      assertNotIncludes(rendered.subject, " / ", `${item.id}: subject not bilingual`);
+    }
+  }
+
+  {
+    const enforce = readFileSync(resolve("supabase/functions/enforce-deadlines/index.ts"), "utf8");
+    assertNotIncludes(enforce, "/functions/v1/send-email", "enforce-deadlines: no send-email transport");
+    assertNotIncludes(enforce, "async function sendEmail", "enforce-deadlines: no sendEmail helper");
+    assertNotIncludes(enforce, "Deadline Reminder", "enforce-deadlines: no deadline reminder email");
+    assertNotIncludes(enforce, "Sprint Expired —", "enforce-deadlines: no sprint expired email");
+
+    const feedback = readFileSync(resolve("supabase/functions/notify-feedback/index.ts"), "utf8");
+    assertNotIncludes(feedback, "/functions/v1/send-email", "notify-feedback: no send-email transport");
+    assertNotIncludes(feedback, "async function sendEmail", "notify-feedback: no sendEmail helper");
+    assertNotIncludes(feedback, "New Feedback Received", "notify-feedback: no feedback email html");
   }
 
   assertEqual(EMAIL_TEMPLATE_IDS.length, 5, "templates: five ids");

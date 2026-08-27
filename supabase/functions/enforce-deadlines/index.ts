@@ -6,28 +6,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-async function sendEmail(
-  supabaseUrl: string,
-  supabaseKey: string,
-  to: string,
-  subject: string,
-  html: string
-): Promise<boolean> {
-  try {
-    const res = await fetch(supabaseUrl + "/functions/v1/send-email", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + supabaseKey,
-      },
-      body: JSON.stringify({ to, subject, html }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
 async function getPauseThreshold(supabaseAdmin: ReturnType<typeof createClient>): Promise<number> {
   try {
     const { data, error } = await supabaseAdmin
@@ -166,8 +144,6 @@ async function transitionSessionsToAwaitingFeedback(
 
 async function processSingleUser(
   supabaseAdmin: ReturnType<typeof createClient>,
-  supabaseUrl: string,
-  supabaseKey: string,
   targetUserId: string,
   now: Date,
   results: string[]
@@ -189,11 +165,10 @@ async function processSingleUser(
 
   const { data: learnerProfile } = await supabaseAdmin
     .from("profiles")
-    .select("email, full_name")
+    .select("full_name")
     .eq("id", targetUserId)
     .maybeSingle();
 
-  const learnerEmail = learnerProfile?.email || "";
   const learnerName = learnerProfile?.full_name || "Learner";
 
   // Session-level status transitions
@@ -286,36 +261,6 @@ async function processSingleUser(
   if (sprintError || !activeSprints) return;
 
   for (const sprint of activeSprints) {
-    const deadlines = [
-      { label: "Session 1", field: sprint.deadline_session1, num: 1 },
-      { label: "Session 2", field: sprint.deadline_session2, num: 2 },
-      { label: "Session 3", field: sprint.deadline_session3, num: 3 },
-    ];
-
-    for (const dl of deadlines) {
-      if (!dl.field) continue;
-      const deadlineTime = new Date(dl.field).getTime();
-      const hoursLeft = (deadlineTime - now.getTime()) / (1000 * 60 * 60);
-
-      if (hoursLeft > 0 && hoursLeft <= 24 && learnerEmail) {
-        const emailHtml = '<div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px">' +
-          '<div style="background:#f0f9f0;border-radius:12px;padding:24px;text-align:center">' +
-          '<h1 style="color:#166534;margin:0 0 8px;font-size:22px">⏰ Deadline Reminder</h1>' +
-          '<p style="color:#166534;font-size:15px;margin:0">Sprint ' + sprint.sprint_number + ' — ' + dl.label + '</p>' +
-          '</div>' +
-          '<div style="padding:24px 0">' +
-          '<p style="font-size:15px;color:#333;margin:0 0 8px">Hi ' + learnerName + ',</p>' +
-          '<p style="font-size:14px;color:#555;line-height:1.6;margin:0 0 16px">Your deadline for <strong>' + dl.label + '</strong> of <strong>Sprint ' + sprint.sprint_number + '</strong> is in <strong>' + Math.round(hoursLeft) + ' hours</strong>. Don\'t forget to complete it!</p>' +
-          '<p style="font-size:13px;color:#888;margin:0">— The Better Minds Team</p>' +
-          '</div></div>';
-
-        await sendEmail(supabaseUrl, supabaseKey, learnerEmail,
-          "Deadline Reminder — Sprint " + sprint.sprint_number + ", " + dl.label,
-          emailHtml
-        );
-      }
-    }
-
     const allDeadlines = [
       sprint.deadline_session1 ? new Date(sprint.deadline_session1).getTime() : 0,
       sprint.deadline_session2 ? new Date(sprint.deadline_session2).getTime() : 0,
@@ -371,27 +316,6 @@ async function processSingleUser(
       );
     }
 
-    if (learnerEmail) {
-      const emailHtml = '<div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px">' +
-        '<div style="background:#fef2f2;border-radius:12px;padding:24px;text-align:center">' +
-        '<h1 style="color:#991b1b;margin:0 0 8px;font-size:22px">⚠ Sprint Expired</h1>' +
-        '<p style="color:#991b1b;font-size:15px;margin:0">Sprint ' + sprint.sprint_number + '</p>' +
-        '</div>' +
-        '<div style="padding:24px 0">' +
-        '<p style="font-size:15px;color:#333;margin:0 0 8px">Hi ' + learnerName + ',</p>' +
-        '<p style="font-size:14px;color:#555;line-height:1.6;margin:0 0 16px">Unfortunately, the deadline for <strong>Sprint ' + sprint.sprint_number + '</strong> has passed without any completed sessions.' +
-        (shouldAlertAdmins
-          ? ' This is your <strong>' + newMissedCount + 'th</strong> missed sprint. Please coordinate with your admin to get back on track.'
-          : ' This is your <strong>' + newMissedCount + 'st</strong> missed sprint. Stay on schedule for the next one.') +
-        '</p><p style="font-size:13px;color:#888;margin:0">— The Better Minds Team</p>' +
-        '</div></div>';
-
-      await sendEmail(supabaseUrl, supabaseKey, learnerEmail,
-        "Sprint Expired — " + sprint.sprint_number,
-        emailHtml
-      );
-    }
-
     results.push("Sprint " + sprint.sprint_number + ": expired" + (shouldAlertAdmins ? " — ADMIN ALERT" : "") + " (missed: " + newMissedCount + "/" + pauseThreshold + ")");
   }
 }
@@ -433,7 +357,7 @@ serve(async (req: Request) => {
       if (allEnrollments && allEnrollments.length > 0) {
         results.push("[BATCH] Processing " + allEnrollments.length + " active enrollments for deadlines");
         for (const enr of allEnrollments) {
-          await processSingleUser(supabaseAdmin, supabaseUrl, supabaseKey, enr.learner_id, now, results);
+          await processSingleUser(supabaseAdmin, enr.learner_id, now, results);
         }
       }
 
@@ -460,7 +384,7 @@ serve(async (req: Request) => {
       );
     }
 
-    await processSingleUser(supabaseAdmin, supabaseUrl, supabaseKey, targetUserId || caller.id, now, results);
+    await processSingleUser(supabaseAdmin, targetUserId || caller.id, now, results);
 
     return new Response(
       JSON.stringify({ enforced: results.length > 0, results }),

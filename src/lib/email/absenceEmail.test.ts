@@ -245,9 +245,11 @@ async function run() {
       course_name: "English B1",
     });
     assertIncludes(one.subject, "1/5", "2: subject 1/5");
+    assertEqual(one.subject, "Absence recorded — 1/5", "2: english subject");
     assertIncludes(one.html, "1/5", "2: body 1/5");
     assertIncludes(one.html, "upcoming classes", "2: below-limit reminder EN");
     assertNotIncludes(one.html, "reached the absence limit", "2: not at-limit wording");
+    assertNotIncludes(one.html, "Buổi", "2: english only");
 
     const four = renderEmailTemplate("absence_recorded", {
       learner_name: "An",
@@ -257,7 +259,8 @@ async function run() {
       absence_limit: 5,
     });
     assertIncludes(four.html, "4/5", "3: body 4/5");
-    assertIncludes(four.html, "theo dõi lịch học", "3: below-limit reminder VI");
+    assertIncludes(four.html, "Regular attendance is important", "3: below-limit reminder");
+    assertNotIncludes(four.html, "theo dõi lịch học", "3: no vietnamese reminder");
 
     const five = renderEmailTemplate("absence_recorded", {
       learner_name: "An",
@@ -269,9 +272,9 @@ async function run() {
     });
     assertIncludes(five.html, "5/5", "4: body 5/5");
     assertIncludes(five.html, "reached the absence limit", "4: critical EN");
-    assertIncludes(five.html, "contact Admin", "4: contact Admin EN");
-    assertIncludes(five.html, "đạt giới hạn", "4: critical VI");
-    assertIncludes(five.html, "liên hệ Admin", "4: contact Admin VI");
+    assertIncludes(five.html, "Better Minds Admin", "4: contact Admin EN");
+    assertNotIncludes(five.html, "đạt giới hạn", "4: no vietnamese critical");
+    assertNotIncludes(five.html, "liên hệ Admin", "4: no vietnamese contact");
     assertNotIncludes(five.html, "att-1", "security: no attendance uuid");
     assertNotIncludes(five.html, "learner-a", "security: no learner uuid");
   }
@@ -449,8 +452,25 @@ async function run() {
     });
     assertIncludes(withWhen.html, "Mon 31 Aug 2026", "content: class date");
     assertIncludes(withWhen.html, "18:00–19:00", "content: class time");
-    assertIncludes(withWhen.html, "Buổi 2", "content: session");
-    assertIncludes(withWhen.html, "Sprint 1", "content: sprint");
+    assertIncludes(withWhen.html, "Session: 2", "content: session");
+    assertIncludes(withWhen.html, "Sprint: 1", "content: sprint");
+    assertNotIncludes(withWhen.html, "Buổi", "content: english only");
+  }
+
+  {
+    const missing = renderEmailTemplate("absence_recorded", {
+      learner_name: "An",
+      session_number: "",
+      sprint_number: "  ",
+      absence_count: 2,
+      absence_limit: 5,
+    });
+    assertNotIncludes(missing.html, "Session:", "missing: no empty session row");
+    assertNotIncludes(missing.html, "Sprint:", "missing: no empty sprint row");
+    assertNotIncludes(missing.html, "Session ,", "missing: no malformed session copy");
+    assertNotIncludes(missing.html, "Sprint .", "missing: no malformed sprint copy");
+    assertIncludes(missing.html, "An absence has been recorded", "missing: still records absence");
+    assertIncludes(missing.html, "2/5", "missing: count still shown");
   }
 
   {

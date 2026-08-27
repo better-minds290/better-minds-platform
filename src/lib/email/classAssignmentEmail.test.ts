@@ -235,7 +235,7 @@ async function run() {
     assertEqual(payloads[1].to, ["mai@example.com"], "2: teacher recipient");
     assertEqual((await store.findByIdempotencyKey(learnerKey))?.status, "sent", "1: learner event sent");
     assertEqual((await store.findByIdempotencyKey(teacherKey))?.status, "sent", "2: teacher event sent");
-    assertIncludes(payloads[0].html, "Session 2", "1: session 2 in learner html");
+    assertIncludes(payloads[0].html, "Session: 2", "1: session 2 in learner html");
     assertIncludes(payloads[1].html, "An Nguyen", "2: learner name in teacher html");
     assertEqual("reply_to" in payloads[0], false, "reply-to omitted when unset");
   }
@@ -391,19 +391,51 @@ async function run() {
       course_name: "English B1",
       meeting_link: "https://meet.example/s2",
     });
-    assertIncludes(session2.subject, "Buổi 2", "13: session 2 subject VI");
-    assertIncludes(session2.subject, "Session 2", "13: session 2 subject EN");
-    assertIncludes(session2.html, "Buổi 2", "13: session 2 body VI");
-    assertIncludes(session2.html, "Session 2", "13: session 2 body EN");
+    assertEqual(session2.subject, "Your class is scheduled — Session 2", "13: new-class subject");
+    assertIncludes(session2.html, "Your class has been scheduled with Mai", "13: new-class intro");
+    assertNotIncludes(session2.html, "You are booked with", "13: no self-book wording");
+    assertNotIncludes(session2.html, "Buổi", "13: english only");
+    assertIncludes(session2.html, "Session: 2", "13: session 2 body");
+    assertIncludes(session2.html, "Sprint: 3", "13: sprint");
+    assertIncludes(session2.html, "Course: English B1", "13: course");
+    assertIncludes(session2.html, "Date: Mon 31 Aug 2026", "13: date");
     assertIncludes(session2.html, "18:00–19:00", "13: start and end");
-    assertIncludes(session2.html, "60 phút", "13: duration VI");
-    assertIncludes(session2.html, "60 min", "13: duration EN");
+    assertIncludes(session2.html, "Duration: 60 min", "13: duration EN");
+    assertNotIncludes(session2.html, "phút", "13: no vietnamese duration");
     assertIncludes(session2.html, "Mai", "13: teacher name");
-    assertIncludes(session2.html, "chuẩn bị bài", "13: prepare reminder VI");
-    assertIncludes(session2.html, "đúng giờ", "13: on-time reminder VI");
-    assertIncludes(session2.html, "prepare for the lesson", "13: prepare reminder EN");
-    assertIncludes(session2.html, "join on time", "13: on-time reminder EN");
+    assertIncludes(session2.html, "prepare for the lesson", "13: prepare reminder");
+    assertIncludes(session2.html, "join on time", "13: on-time reminder");
     assertIncludes(session2.html, "https://meet.example/s2", "13: meeting link");
+  }
+
+  {
+    const grouped = renderEmailTemplate("class_assignment_learner", {
+      learner_name: "An",
+      teacher_name: "Mai",
+      session_number: 2,
+      sprint_number: 1,
+      class_date: "Mon 31 Aug 2026",
+      start_time: "18:00",
+      end_time: "19:00",
+      added_to_existing_class: true,
+    });
+    assertEqual(grouped.subject, "You've been added to a class — Session 2", "13b: group learner subject");
+    assertIncludes(grouped.html, "You've been added to an existing class with Mai", "13b: group learner intro");
+    assertNotIncludes(grouped.html, "Your class has been scheduled with", "13b: not new-class intro");
+
+    const groupedTeacher = renderEmailTemplate("class_assignment_teacher", {
+      learner_name: "An",
+      teacher_name: "Mai",
+      session_number: 2,
+      sprint_number: 1,
+      class_date: "Mon 31 Aug 2026",
+      start_time: "18:00",
+      end_time: "19:00",
+      added_to_existing_class: true,
+    });
+    assertEqual(groupedTeacher.subject, "New learner assigned — An", "13b: teacher subject unchanged");
+    assertIncludes(groupedTeacher.html, "An has been added to your existing class", "13b: group teacher intro");
+    assertNotIncludes(groupedTeacher.html, "has been assigned to your class", "13b: not new-class teacher intro");
   }
 
   {
@@ -417,14 +449,17 @@ async function run() {
       end_time: "20:00",
       duration_minutes: 60,
     });
-    assertIncludes(session3.subject, "Binh", "14: learner in teacher subject");
-    assertIncludes(session3.html, "Buổi 3", "14: session 3 VI");
-    assertIncludes(session3.html, "Session 3", "14: session 3 EN");
+    assertEqual(session3.subject, "New learner assigned — Binh", "14: learner in teacher subject");
+    assertIncludes(session3.html, "Binh has been assigned to your class", "14: new assignment wording");
+    assertNotIncludes(session3.html, "is in your Session", "14: no vague roster wording");
+    assertNotIncludes(session3.html, "Buổi", "14: english only");
+    assertIncludes(session3.html, "Session: 3", "14: session 3");
     assertIncludes(session3.html, "Chris", "14: teacher name");
     assertIncludes(session3.html, "Binh", "14: learner name");
     assertIncludes(session3.html, "19:00–20:00", "14: times");
-    assertIncludes(session3.html, "prepare for the lesson", "14: prepare reminder");
-    assertIncludes(session3.html, "available in the app", "14: missing meeting link fallback");
+    assertIncludes(session3.html, "prepare for the session", "14: prepare reminder");
+    assertIncludes(session3.html, "not available yet", "14: missing meeting link fallback");
+    assertNotIncludes(session3.html, "if provided", "14: no promised future link");
   }
 
   {

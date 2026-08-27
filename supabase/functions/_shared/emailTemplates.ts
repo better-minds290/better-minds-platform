@@ -78,124 +78,124 @@ function field(value: unknown): string {
   return escapeHtml(value);
 }
 
-function optionalCourse(courseName?: string): { vi: string; en: string } {
+function optionalText(value: unknown): string {
+  if (value == null) return "";
+  return String(value).trim();
+}
+
+function optionalCourseSuffix(courseName?: string): string {
   const name = (courseName || "").trim();
-  if (!name) return { vi: "", en: "" };
-  const safe = field(name);
-  return { vi: ` (${safe})`, en: ` (${safe})` };
+  if (!name) return "";
+  return ` (${field(name)})`;
 }
 
-function durationPhrase(minutes?: number): { vi: string; en: string } {
-  if (!minutes || minutes <= 0 || !Number.isFinite(minutes)) return { vi: "", en: "" };
-  const n = Math.round(minutes);
-  return { vi: ` (${n} phút)`, en: ` (${n} min)` };
+function durationLabel(minutes?: number): string {
+  if (!minutes || minutes <= 0 || !Number.isFinite(minutes)) return "";
+  return `${Math.round(minutes)} min`;
 }
 
-function meetingBlock(meetingLink?: string): { vi: string; en: string } {
+function classTimeRange(start?: string, end?: string): string {
+  const startText = optionalText(start);
+  const endText = optionalText(end);
+  if (startText && endText) return `${startText}–${endText}`;
+  return startText || endText;
+}
+
+function detailList(items: Array<{ label: string; value?: unknown }>): string {
+  const rows = items
+    .map((item) => {
+      const value = optionalText(item.value);
+      if (!value) return "";
+      return `<li>${field(item.label)}: ${field(value)}</li>`;
+    })
+    .filter(Boolean);
+  if (rows.length === 0) return "";
+  return `<ul style="padding-left:20px;margin:12px 0">${rows.join("")}</ul>`;
+}
+
+function meetingBlock(meetingLink?: string): string {
   const link = (meetingLink || "").trim();
   if (!link) {
-    return {
-      vi: "<p>Link họp sẽ được gửi trong ứng dụng nếu có.</p>",
-      en: "<p>The meeting link will be available in the app if provided.</p>",
-    };
+    return "<p>The meeting link is not available yet. Please check the app again before your class.</p>";
   }
   const safe = field(link);
   const isHttp = /^https?:\/\//i.test(link);
   if (!isHttp) {
-    return {
-      vi: `<p>Link họp: ${safe}</p>`,
-      en: `<p>Meeting link: ${safe}</p>`,
-    };
+    return `<p>Meeting link: ${safe}</p>`;
   }
-  return {
-    vi: `<p>Link họp: <a href="${safe}">${safe}</a></p>`,
-    en: `<p>Meeting link: <a href="${safe}">${safe}</a></p>`,
-  };
+  return `<p>Meeting link: <a href="${safe}">${safe}</a></p>`;
 }
 
-function wrapBilingual(args: {
-  headingVi: string;
-  headingEn: string;
-  bodyVi: string;
-  bodyEn: string;
-}): string {
+function wrapEnglish(args: { heading: string; body: string }): string {
   return (
     '<div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px">' +
     `<div style="background:#f0f9f0;border-radius:12px;padding:20px 24px">` +
-    `<p style="margin:0 0 4px;font-size:18px;font-weight:700;color:#166534">${args.headingVi}</p>` +
-    `<p style="margin:0;font-size:14px;color:#166534">${args.headingEn}</p>` +
+    `<p style="margin:0;font-size:18px;font-weight:700;color:#166534">${args.heading}</p>` +
     "</div>" +
-    `<div lang="vi" style="padding:20px 0 8px">${args.bodyVi}</div>` +
-    '<hr style="border:none;border-top:1px solid #e5e7eb;margin:8px 0">' +
-    `<div lang="en" style="padding:8px 0 0">${args.bodyEn}</div>` +
-    '<p style="font-size:13px;color:#888;margin:16px 0 0">— Better Minds</p>' +
+    `<div lang="en" style="padding:20px 0 8px">${args.body}</div>` +
+    '<p style="font-size:13px;color:#888;margin:16px 0 0">Best,<br>Better Minds Team</p>' +
     "</div>"
   );
 }
 
+function isPluralLateSessions(label: string): boolean {
+  return /\band\b/i.test(label.trim());
+}
+
 function renderMissedBooking(data: MissedBookingData): RenderedEmail {
   const name = field(data.learner_name);
-  const sessionsVi = field(data.late_sessions_vi);
-  const sessionsEn = field(data.late_sessions_en);
+  const sessions = field(data.late_sessions_en);
   const sprint = field(data.sprint_number);
-  const course = optionalCourse(data.course_name);
+  const course = optionalCourseSuffix(data.course_name);
+  const verb = isPluralLateSessions(data.late_sessions_en || "")
+    ? "still need to be scheduled"
+    : "still needs to be scheduled";
   return {
     template: "missed_booking",
-    subject:
-      "Nhắc lịch đăng ký — Admin sẽ hỗ trợ xếp lớp / Booking reminder — Admin will help arrange your class",
-    html: wrapBilingual({
-      headingVi: "Nhắc nhở đăng ký lớp",
-      headingEn: "Booking reminder",
-      bodyVi:
-        `<p>Chào ${name},</p>` +
-        `<p>Cửa sổ đăng ký Chủ nhật đã kết thúc. ${sessionsVi} trong Sprint ${sprint}${course.vi} chưa được đặt.</p>` +
-        "<p>Admin sẽ xếp lớp giúp bạn. Vui lòng theo dõi email để nhận lịch học.</p>",
-      bodyEn:
+    subject: "Booking missed — Admin will help arrange your class",
+    html: wrapEnglish({
+      heading: "Booking Reminder",
+      body:
         `<p>Hi ${name},</p>` +
-        `<p>Sunday booking has closed. ${sessionsEn} in Sprint ${sprint}${course.en} still need a class.</p>` +
-        "<p>Admin will arrange a class for you. Please watch your email for the assignment.</p>",
+        `<p>The Sunday booking window has closed, and ${sessions} in Sprint ${sprint}${course} ${verb}.</p>` +
+        "<p>Our Admin team will help find and arrange a suitable class for you. If a suitable class is arranged, you will receive another email with the class details.</p>" +
+        "<p>Please keep an eye on your email for the class assignment.</p>",
     }),
   };
+}
+
+function assignmentDetails(data: ClassAssignmentData, includeDuration: boolean): string {
+  return detailList([
+    { label: "Session", value: data.session_number },
+    { label: "Sprint", value: data.sprint_number },
+    { label: "Course", value: data.course_name },
+    { label: "Date", value: data.class_date },
+    { label: "Time", value: classTimeRange(data.start_time, data.end_time) },
+    ...(includeDuration ? [{ label: "Duration", value: durationLabel(data.duration_minutes) }] : []),
+  ]);
 }
 
 function renderAssignmentLearner(data: ClassAssignmentData): RenderedEmail {
   const learner = field(data.learner_name);
   const teacher = field(data.teacher_name);
   const session = field(data.session_number);
-  const sprint = field(data.sprint_number);
-  const date = field(data.class_date);
-  const start = field(data.start_time);
-  const end = field(data.end_time);
-  const course = optionalCourse(data.course_name);
-  const meeting = meetingBlock(data.meeting_link);
-  const duration = durationPhrase(data.duration_minutes);
   const group = !!data.added_to_existing_class;
-  const whenVi = `${date}, ${start}–${end}${duration.vi}`;
-  const whenEn = `${date}, ${start}–${end}${duration.en}`;
-  const detailVi = group
-    ? `<p>Bạn đã được xếp vào lớp hiện có với ${teacher}, Buổi ${session}, Sprint ${sprint}${course.vi} vào ${whenVi}.</p>`
-    : `<p>Bạn đã được xếp với ${teacher}, Buổi ${session}, Sprint ${sprint}${course.vi} vào ${whenVi}.</p>`;
-  const detailEn = group
-    ? `<p>You have been added to an existing class with ${teacher} for Session ${session}, Sprint ${sprint}${course.en} on ${whenEn}.</p>`
-    : `<p>You are booked with ${teacher} for Session ${session}, Sprint ${sprint}${course.en} on ${whenEn}.</p>`;
+  const intro = group
+    ? `<p>You've been added to an existing class with ${teacher}.</p>`
+    : `<p>Your class has been scheduled with ${teacher}.</p>`;
   return {
     template: "class_assignment_learner",
     subject: group
-      ? `Đã xếp vào lớp — Buổi ${session} / Added to class — Session ${session}`
-      : `Đã xếp lớp — Buổi ${session} / Your class is scheduled — Session ${session}`,
-    html: wrapBilingual({
-      headingVi: group ? "Bạn đã được xếp vào lớp" : "Lịch học đã được xếp",
-      headingEn: group ? "You've been added to a class" : "Your class is scheduled",
-      bodyVi:
-        `<p>Chào ${learner},</p>` +
-        detailVi +
-        meeting.vi +
-        "<p>Vui lòng chuẩn bị bài và vào đúng giờ.</p>",
-      bodyEn:
+      ? `You've been added to a class — Session ${session}`
+      : `Your class is scheduled — Session ${session}`,
+    html: wrapEnglish({
+      heading: group ? "You've been added to a class" : "Your class is scheduled",
+      body:
         `<p>Hi ${learner},</p>` +
-        detailEn +
-        meeting.en +
-        "<p>Please prepare for the lesson and join on time.</p>",
+        intro +
+        assignmentDetails(data, true) +
+        meetingBlock(data.meeting_link) +
+        "<p>Please review the class details, prepare for the lesson, and join on time.</p>",
     }),
   };
 }
@@ -203,127 +203,86 @@ function renderAssignmentLearner(data: ClassAssignmentData): RenderedEmail {
 function renderAssignmentTeacher(data: ClassAssignmentData): RenderedEmail {
   const learner = field(data.learner_name);
   const teacher = field(data.teacher_name);
-  const session = field(data.session_number);
-  const sprint = field(data.sprint_number);
-  const date = field(data.class_date);
-  const start = field(data.start_time);
-  const end = field(data.end_time);
-  const course = optionalCourse(data.course_name);
-  const meeting = meetingBlock(data.meeting_link);
-  const duration = durationPhrase(data.duration_minutes);
   const group = !!data.added_to_existing_class;
-  const whenVi = `${date}, ${start}–${end}${duration.vi}`;
-  const whenEn = `${date}, ${start}–${end}${duration.en}`;
-  const detailVi = group
-    ? `<p>${learner} đã được xếp thêm vào lớp hiện có của bạn, Buổi ${session}, Sprint ${sprint}${course.vi} vào ${whenVi}.</p>`
-    : `<p>${learner} đã được xếp vào Buổi ${session}, Sprint ${sprint}${course.vi} vào ${whenVi}.</p>`;
-  const detailEn = group
-    ? `<p>${learner} has been added to your existing class for Session ${session}, Sprint ${sprint}${course.en} on ${whenEn}.</p>`
-    : `<p>${learner} is in your Session ${session}, Sprint ${sprint}${course.en} on ${whenEn}.</p>`;
+  const intro = group
+    ? `<p>${learner} has been added to your existing class.</p>`
+    : `<p>${learner} has been assigned to your class.</p>`;
   return {
     template: "class_assignment_teacher",
-    subject: `Học viên mới — ${learner} / New learner assigned — ${learner}`,
-    html: wrapBilingual({
-      headingVi: group ? "Học viên mới được xếp vào lớp hiện có" : "Học viên mới được xếp vào lớp",
-      headingEn: group ? "Learner added to your class" : "New learner assigned",
-      bodyVi:
-        `<p>Chào ${teacher},</p>` +
-        detailVi +
-        meeting.vi +
-        "<p>Vui lòng chuẩn bị bài và bắt đầu đúng giờ.</p>",
-      bodyEn:
-        `<p>Hello ${teacher},</p>` +
-        detailEn +
-        meeting.en +
-        "<p>Please prepare for the lesson and start on time.</p>",
+    subject: `New learner assigned — ${learner}`,
+    html: wrapEnglish({
+      heading: group ? "Learner added to your class" : "New learner assigned",
+      body:
+        `<p>Hi ${teacher},</p>` +
+        intro +
+        assignmentDetails(data, false) +
+        meetingBlock(data.meeting_link) +
+        "<p>Please review the class details and prepare for the session.</p>",
     }),
   };
 }
 
 function renderAbsence(data: AbsenceRecordedData): RenderedEmail {
   const name = field(data.learner_name);
-  const session = field(data.session_number);
-  const sprint = field(data.sprint_number);
   const count = field(data.absence_count);
   const limit = field(data.absence_limit);
-  const course = optionalCourse(data.course_name);
   const countNum = Number(data.absence_count);
   const limitNum = Number(data.absence_limit);
   const atLimit = Number.isFinite(countNum) && Number.isFinite(limitNum) && countNum >= limitNum;
-  const date = (data.class_date || "").trim();
-  const time = (data.class_time || "").trim();
-  const whenRaw = [date, time].filter(Boolean).join(", ");
-  const when = whenRaw
-    ? {
-        vi: `<p>Thời gian lớp: ${field(whenRaw)}.</p>`,
-        en: `<p>Class time: ${field(whenRaw)}.</p>`,
-      }
-    : { vi: "", en: "" };
-  const followUpVi = atLimit
-    ? "<p>Bạn đã đạt giới hạn vắng học. Vui lòng liên hệ Admin để được hỗ trợ.</p>"
-    : "<p>Đi học đều đặn giúp bạn và giáo viên. Vui lòng theo dõi lịch học sắp tới.</p>";
-  const followUpEn = atLimit
-    ? "<p>You have reached the absence limit. Please contact Admin for follow-up.</p>"
-    : "<p>Regular attendance helps you and your teachers. Please watch your upcoming classes.</p>";
+  const classTime = [optionalText(data.class_date), optionalText(data.class_time)].filter(Boolean).join(", ");
+  const details = detailList([
+    { label: "Session", value: data.session_number },
+    { label: "Sprint", value: data.sprint_number },
+    { label: "Course", value: data.course_name },
+    { label: "Class time", value: classTime },
+  ]);
+  const recorded = details
+    ? "<p>An absence has been recorded for the following class:</p>" + details
+    : "<p>An absence has been recorded.</p>";
+  const followUp = atLimit
+    ? "<p>You have reached the absence limit for this course. Please contact Better Minds Admin for further assistance.</p>"
+    : "<p>Regular attendance is important for making steady progress in the course. Please make sure to attend your upcoming classes whenever possible.</p>";
   return {
     template: "absence_recorded",
-    subject: `Đã ghi nhận vắng học — ${count}/${limit} / Absence recorded — ${count}/${limit}`,
-    html: wrapBilingual({
-      headingVi: atLimit ? "Đã đạt giới hạn vắng học" : "Đã ghi nhận vắng học",
-      headingEn: atLimit ? "Absence limit reached" : "Absence recorded",
-      bodyVi:
-        `<p>Chào ${name},</p>` +
-        `<p>Buổi vắng (Buổi ${session}, Sprint ${sprint}${course.vi}) đã được ghi nhận.</p>` +
-        when.vi +
-        `<p>Tổng vắng khóa này: ${count}/${limit}.</p>` +
-        followUpVi,
-      bodyEn:
+    subject: `Absence recorded — ${count}/${limit}`,
+    html: wrapEnglish({
+      heading: atLimit ? "Absence limit reached" : "Absence recorded",
+      body:
         `<p>Hi ${name},</p>` +
-        `<p>An absence was recorded for Session ${session}, Sprint ${sprint}${course.en}.</p>` +
-        when.en +
-        `<p>Cumulative absences this course: ${count}/${limit}.</p>` +
-        followUpEn,
+        recorded +
+        `<p>Total recorded absences: ${count}/${limit}.</p>` +
+        followUp,
     }),
   };
 }
 
 function renderCancelled(data: ClassCancelledTeacherUnavailableData): RenderedEmail {
   const learner = field(data.learner_name);
-  const teacher = field(data.teacher_name);
-  const session = field(data.session_number);
-  const date = field(data.class_date);
-  const sprintRaw = data.sprint_number != null && String(data.sprint_number).trim() !== ""
-    ? field(data.sprint_number)
-    : "";
-  const sprintVi = sprintRaw ? `, Sprint ${sprintRaw}` : "";
-  const sprintEn = sprintRaw ? `, Sprint ${sprintRaw}` : "";
-  const course = optionalCourse(data.course_name);
-  const start = (data.start_time || "").trim();
-  const end = (data.end_time || "").trim();
-  const timeRaw = start && end ? `${start}–${end}` : start || end;
-  const timeVi = timeRaw ? `, ${field(timeRaw)}` : "";
-  const timeEn = timeRaw ? `, ${field(timeRaw)}` : "";
   const canReply = !!data.reply_to_configured;
-  const followVi = canReply
-    ? "<p>Hãy trả lời email này nếu bạn muốn học bù (ghi rõ buổi). Admin sẽ sắp xếp nếu còn thời gian và chỗ trống.</p>"
-    : "<p>Hãy liên hệ Admin Better Minds nếu bạn muốn học bù (ghi rõ buổi). Admin sẽ sắp xếp nếu còn thời gian và chỗ trống.</p>";
-  const followEn = canReply
-    ? "<p>Reply to this email if you want a makeup class (include the session). Admin will try to arrange it if time and availability allow.</p>"
-    : "<p>Contact Better Minds Admin if you want a makeup class (include the session). Admin will try to arrange it if time and availability allow.</p>";
+  const requestLine = canReply
+    ? "<p>Please reply to this email to request one.</p>"
+    : "<p>Please contact Better Minds Admin to request a makeup class.</p>";
+  const details = detailList([
+    { label: "Teacher", value: data.teacher_name },
+    { label: "Session", value: data.session_number },
+    { label: "Sprint", value: data.sprint_number },
+    { label: "Course", value: data.course_name },
+    { label: "Date", value: data.class_date },
+    { label: "Time", value: classTimeRange(data.start_time, data.end_time) },
+  ]);
   return {
     template: "class_cancelled_teacher_unavailable",
-    subject: "Lớp đã hủy — có thể yêu cầu học bù / Class cancelled — makeup available",
-    html: wrapBilingual({
-      headingVi: "Lớp đã hủy",
-      headingEn: "Class cancelled",
-      bodyVi:
-        `<p>Chào ${learner},</p>` +
-        `<p>Buổi ${session}${sprintVi}${course.vi} với ${teacher} ngày ${date}${timeVi} đã bị hủy vì giáo viên đột xuất bận lịch. Chúng tôi xin lỗi vì sự bất tiện này.</p>` +
-        followVi,
-      bodyEn:
+    subject: "Class cancelled — You can request a makeup class",
+    html: wrapEnglish({
+      heading: "Class cancelled",
+      body:
         `<p>Hi ${learner},</p>` +
-        `<p>Session ${session}${sprintEn}${course.en} with ${teacher} on ${date}${timeEn} was cancelled because the teacher has an unexpected schedule conflict. We apologize for the inconvenience.</p>` +
-        followEn,
+        "<p>Unfortunately, your class has been cancelled because your teacher is unavailable.</p>" +
+        details +
+        "<p>You can request a makeup class for this session.</p>" +
+        requestLine +
+        "<p>Our Admin team will try to arrange a suitable replacement class based on teacher and schedule availability.</p>" +
+        "<p>We apologize for the inconvenience.</p>",
     }),
   };
 }
