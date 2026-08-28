@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
@@ -55,9 +55,16 @@ export default function FeedbackTab() {
   const [absentStudents, setAbsentStudents] = useState<Record<string, Set<string>>>({});
   const [markingAbsent, setMarkingAbsent] = useState<string | null>(null);
   const [absentSuccess, setAbsentSuccess] = useState<string | null>(null);
+  const [absentConfirm, setAbsentConfirm] = useState<{
+    session: PendingSession;
+    student: SessionStudent;
+  } | null>(null);
+  const markingAbsentLock = useRef(false);
 
-  const markStudentAbsent = async (session: PendingSession, student: SessionStudent) => {
+  const markStudentAbsent = async (session: PendingSession, student: SessionStudent): Promise<boolean> => {
+    if (markingAbsentLock.current) return false;
     const key = `${session.sessionId}_${student.studentId}`;
+    markingAbsentLock.current = true;
     setMarkingAbsent(key);
     setErrorMsg(null);
 
@@ -192,12 +199,26 @@ export default function FeedbackTab() {
           setExpandedId(null);
         }
       }
+      return true;
     } catch (err: any) {
       setErrorMsg(err?.message || t("feedback.markAbsentError"));
       setTimeout(() => setErrorMsg(null), 4000);
+      return false;
     } finally {
+      markingAbsentLock.current = false;
       setMarkingAbsent(null);
     }
+  };
+
+  const dismissAbsentConfirm = () => {
+    if (markingAbsent !== null || markingAbsentLock.current) return;
+    setAbsentConfirm(null);
+  };
+
+  const handleConfirmAbsent = async () => {
+    if (!absentConfirm || markingAbsent !== null || markingAbsentLock.current) return;
+    const succeeded = await markStudentAbsent(absentConfirm.session, absentConfirm.student);
+    if (succeeded) setAbsentConfirm(null);
   };
 
   const fetchSessions = useCallback(async () => {
@@ -888,7 +909,7 @@ export default function FeedbackTab() {
                                 <button
                                   key={st.studentId}
                                   type="button"
-                                  onClick={() => markStudentAbsent(session, st)}
+                                  onClick={() => setAbsentConfirm({ session, student: st })}
                                   disabled={markingAbsent !== null}
                                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-medium bg-accent-100 text-accent-700 hover:bg-accent-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 whitespace-nowrap cursor-pointer"
                                 >
@@ -981,6 +1002,62 @@ export default function FeedbackTab() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {absentConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={dismissAbsentConfirm}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="feedback-mark-absent-title"
+            className="bg-background-50 rounded-2xl p-6 mx-4 max-w-sm w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-12 h-12 mx-auto flex items-center justify-center rounded-2xl bg-accent-100 text-accent-600 mb-4">
+              <i className="ri-user-unfollow-line text-xl"></i>
+            </div>
+            <h4 id="feedback-mark-absent-title" className="text-base font-semibold text-foreground-950 text-center mb-1">
+              {t("feedback.markAbsentConfirmTitle")}
+            </h4>
+            <p className="text-sm text-foreground-500 text-center mb-6">
+              {t("feedback.markAbsentConfirmMessage")}
+            </p>
+            {errorMsg && (
+              <p className="text-sm text-accent-700 text-center mb-4 flex items-center justify-center gap-1.5">
+                <i className="ri-error-warning-line"></i>
+                {errorMsg}
+              </p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={dismissAbsentConfirm}
+                disabled={markingAbsent !== null}
+                className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium bg-background-100 text-foreground-700 hover:bg-background-200 cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {t("feedback.markAbsentConfirmCancel")}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAbsent}
+                disabled={markingAbsent !== null}
+                className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium bg-accent-500 text-background-50 hover:bg-accent-600 cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5"
+              >
+                {markingAbsent !== null ? (
+                  <>
+                    <i className="ri-loader-4-line animate-spin"></i>
+                    {t("feedback.markingAbsent")}
+                  </>
+                ) : (
+                  t("feedback.markAbsentConfirmButton")
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
