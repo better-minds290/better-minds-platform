@@ -453,6 +453,7 @@ const dashboard = {
   "teacher.availabilityError": "Không thể lưu lịch rảnh. Vui lòng thử lại.",
   "teacher.availabilityDuplicateSlot": "Đã có slot trùng ngày và giờ này rồi!",
   "teacher.availabilitySundayBlocked": "Chủ Nhật không phải ngày dạy. Hãy chọn Thứ 2–Thứ 7.",
+  "teacher.availabilityCrossesMidnight": "Khung giờ này kéo dài sang ngày hôm sau. Vui lòng chọn giờ bắt đầu sớm hơn hoặc thời lượng ngắn hơn.",
   "teacher.availabilityLoadError": "Không thể tải lịch rảnh. Vui lòng thử lại.",
   "teacher.availabilityDeleteConfirm": "Xóa khung giờ này?",
   "teacher.availabilityPreview": "Lịch Dạy Trong Tuần",

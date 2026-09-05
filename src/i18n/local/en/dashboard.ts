@@ -453,6 +453,7 @@ const dashboard = {
   "teacher.availabilityError": "Could not save availability. Please try again.",
   "teacher.availabilityDuplicateSlot": "A slot with the same date and time already exists.",
   "teacher.availabilitySundayBlocked": "Sunday is not a teaching day. Choose Monday–Saturday.",
+  "teacher.availabilityCrossesMidnight": "This time slot crosses midnight. Please choose an earlier start time or a shorter duration.",
   "teacher.availabilityLoadError": "Could not load your availability. Please try again.",
   "teacher.availabilityDeleteConfirm": "Remove this time slot?",
   "teacher.availabilityPreview": "Your Teaching Week",

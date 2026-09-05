@@ -12,6 +12,10 @@ import {
   vietnamTodayStr,
 } from "@/lib/datetime";
 import { isTeachingClassDate } from "@/lib/scheduling";
+import {
+  formatSameDayAvailabilityEndTime,
+  midnightCrossingSlotsBlockingSave,
+} from "@/lib/availabilitySlot";
 
 interface TimeSlot {
   id?: string;
@@ -170,11 +174,11 @@ export default function AvailabilityTab() {
   const handleAddSlot = () => {
     const startTime = "08:00";
     const dur = 60;
-    const [h, m] = startTime.split(":").map(Number);
-    const totalMin = h * 60 + m + dur;
-    const eh = Math.floor(totalMin / 60) % 24;
-    const em = totalMin % 60;
-    const endTime = `${String(eh).padStart(2, "0")}:${String(em).padStart(2, "0")}`;
+    const endTime = formatSameDayAvailabilityEndTime(startTime, dur);
+    if (!endTime) {
+      showToast("error", t("teacher.availabilityCrossesMidnight"));
+      return;
+    }
 
     if (!isTeachingClassDate(newSlotDate)) {
       showToast("error", t("teacher.availabilitySundayBlocked"));
@@ -221,19 +225,19 @@ export default function AvailabilityTab() {
         }
         updated[index] = { ...updated[index], date: value as string };
       } else if (field === "start_time") {
-        updated[index] = { ...updated[index], start_time: value as string };
-        const [h2, m2] = (value as string).split(":").map(Number);
-        const totalMin2 = h2 * 60 + m2 + updated[index].duration_minutes;
-        const eh2 = Math.floor(totalMin2 / 60) % 24;
-        const em2 = totalMin2 % 60;
-        updated[index].end_time = `${String(eh2).padStart(2, "0")}:${String(em2).padStart(2, "0")}`;
+        const endTime = formatSameDayAvailabilityEndTime(value as string, updated[index].duration_minutes);
+        if (!endTime) {
+          showToast("error", t("teacher.availabilityCrossesMidnight"));
+          return prev;
+        }
+        updated[index] = { ...updated[index], start_time: value as string, end_time: endTime };
       } else if (field === "duration_minutes") {
-        updated[index] = { ...updated[index], duration_minutes: value as number };
-        const [h3, m3] = updated[index].start_time.split(":").map(Number);
-        const totalMin3 = h3 * 60 + m3 + (value as number);
-        const eh3 = Math.floor(totalMin3 / 60) % 24;
-        const em3 = totalMin3 % 60;
-        updated[index].end_time = `${String(eh3).padStart(2, "0")}:${String(em3).padStart(2, "0")}`;
+        const endTime = formatSameDayAvailabilityEndTime(updated[index].start_time, value as number);
+        if (!endTime) {
+          showToast("error", t("teacher.availabilityCrossesMidnight"));
+          return prev;
+        }
+        updated[index] = { ...updated[index], duration_minutes: value as number, end_time: endTime };
       }
       return updated;
     });
@@ -281,6 +285,11 @@ export default function AvailabilityTab() {
 
   const handleSave = async () => {
     if (!profile?.id) return;
+    // Must run before DELETE so a midnight-crossing row cannot wipe existing availability.
+    if (midnightCrossingSlotsBlockingSave(slots).length > 0) {
+      showToast("error", t("teacher.availabilityCrossesMidnight"));
+      return;
+    }
     setSaving(true);
     try {
       // Check if any removed slots are already booked
@@ -507,6 +516,11 @@ export default function AvailabilityTab() {
                 const durationInput = document.getElementById("new-slot-duration") as HTMLSelectElement;
                 const startTime = timeInput?.value || "08:00";
                 const dur = parseInt(durationInput?.value || "60", 10);
+                const endTime = formatSameDayAvailabilityEndTime(startTime, dur);
+                if (!endTime) {
+                  showToast("error", t("teacher.availabilityCrossesMidnight"));
+                  return;
+                }
 
                 if (!isTeachingClassDate(newSlotDate)) {
                   showToast("error", t("teacher.availabilitySundayBlocked"));
@@ -523,11 +537,6 @@ export default function AvailabilityTab() {
                   return;
                 }
 
-                const [h, m] = startTime.split(":").map(Number);
-                const totalMin = h * 60 + m + dur;
-                const eh = Math.floor(totalMin / 60) % 24;
-                const em = totalMin % 60;
-                const endTime = `${String(eh).padStart(2, "0")}:${String(em).padStart(2, "0")}`;
                 const newSlot: TimeSlot = {
                   date: newSlotDate,
                   start_time: startTime,
