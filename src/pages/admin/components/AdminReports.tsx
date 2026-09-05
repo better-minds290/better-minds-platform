@@ -51,6 +51,9 @@ interface AbsenceSummaryRow {
 
 const ABSENCE_LIMIT = 5;
 
+const REPORT_TABLE_SCROLL_CLASS =
+  "max-h-[42.5rem] overflow-x-auto overflow-y-auto rounded-xl border border-background-200";
+
 export default function AdminReports() {
   const { t } = useTranslation();
   const [teacherHours, setTeacherHours] = useState<TeacherWorkHour[]>([]);
@@ -506,10 +509,15 @@ export default function AdminReports() {
             {t("reports.noAbsenceData")}
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-background-200">
+          <div
+            className={REPORT_TABLE_SCROLL_CLASS}
+            tabIndex={0}
+            role="region"
+            aria-label={t("reports.sectionAbsenceSummary")}
+          >
             <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-background-100/70">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-background-100">
                   <th
                     className="text-left px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider cursor-pointer"
                     onClick={() =>
@@ -619,10 +627,15 @@ export default function AdminReports() {
             <p className="text-sm text-foreground-500">{t("reports.noTeacherData")}</p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-background-200">
+          <div
+            className={REPORT_TABLE_SCROLL_CLASS}
+            tabIndex={0}
+            role="region"
+            aria-label={t("reports.sectionTeacherHours")}
+          >
             <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-background-100/70">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-background-100">
                   <th className="text-left px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider">
                     {t("reports.colTeacher")}
                   </th>
@@ -731,10 +744,15 @@ export default function AdminReports() {
             <p className="text-sm text-foreground-500">{t("reports.noLearnerData")}</p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-background-200">
+          <div
+            className={REPORT_TABLE_SCROLL_CLASS}
+            tabIndex={0}
+            role="region"
+            aria-label={t("reports.sectionSprintCompleted")}
+          >
             <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-background-100/70">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-background-100">
                   <th className="text-left px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider">
                     {t("reports.colLearner")}
                   </th>
@@ -886,10 +904,15 @@ export default function AdminReports() {
             <p className="text-sm text-foreground-500">{t("reports.noLearnerData")}</p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-background-200">
+          <div
+            className={REPORT_TABLE_SCROLL_CLASS}
+            tabIndex={0}
+            role="region"
+            aria-label={t("reports.sectionAvgRating")}
+          >
             <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-background-100/70">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-background-100">
                   <th className="text-left px-5 py-3.5 text-xs font-semibold text-foreground-500 uppercase tracking-wider">
                     {t("reports.colLearner")}
                   </th>
