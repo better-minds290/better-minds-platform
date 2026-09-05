@@ -119,7 +119,7 @@ export function isDateInRangeYmd(date: string | null, range: DateRangeYmd): bool
   return date >= range.start && date <= range.end;
 }
 
-async function fetchPaginated<T>(
+export async function fetchPaginated<T>(
   supabase: SupabaseClient,
   table: string,
   columns: string,

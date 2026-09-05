@@ -1,6 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import {
+  currentVietnamMonthYear,
+  fetchMonthlyAdminReport,
+  monthlyReportHasActivity,
+  triggerWorkbookDownload,
+  writeMonthlyReportWorkbook,
+  type MonthlyReportLabels,
+} from "@/lib/adminMonthlyReport";
 import { buildLearnerRatingAggregates } from "@/lib/learnerReports";
 import {
   buildTeachingSessionUnits,
@@ -56,6 +64,7 @@ const REPORT_TABLE_SCROLL_CLASS =
 
 export default function AdminReports() {
   const { t } = useTranslation();
+  const vietnamNow = currentVietnamMonthYear();
   const [teacherHours, setTeacherHours] = useState<TeacherWorkHour[]>([]);
   const [teachingUnits, setTeachingUnits] = useState<TeachingSessionUnit[]>([]);
   const [learnerSprints, setLearnerSprints] = useState<LearnerSprint[]>([]);
@@ -63,6 +72,9 @@ export default function AdminReports() {
   const [absenceSummary, setAbsenceSummary] = useState<AbsenceSummaryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [exportYear, setExportYear] = useState(vietnamNow.year);
+  const [exportMonth, setExportMonth] = useState(vietnamNow.month);
+  const [exporting, setExporting] = useState(false);
 
   const [searchTeacher, setSearchTeacher] = useState("");
   const [searchSprint, setSearchSprint] = useState("");
@@ -282,6 +294,66 @@ export default function AdminReports() {
     [teacherHours]
   );
 
+  const monthlyExportLabels = useMemo<MonthlyReportLabels>(
+    () => ({
+      sheets: {
+        summary: t("reports.exportSheetSummary"),
+        absence: t("reports.exportSheetAbsence"),
+        hours: t("reports.exportSheetHours"),
+        sprints: t("reports.exportSheetSprints"),
+        ratings: t("reports.exportSheetRatings"),
+        honor: t("reports.exportSheetHonor"),
+      },
+      summary: {
+        metric: t("reports.exportMetric"),
+        value: t("reports.exportValue"),
+        month: t("reports.exportColMonth"),
+        timezone: t("reports.exportColTimezone"),
+        sessionsTaught: t("reports.summaryTeacherHours"),
+        teachingHours: t("reports.colCompleted"),
+        sprintsCompleted: t("reports.summarySprintCompleted"),
+        averageRating: t("reports.summaryAvgRating"),
+        absenceEvents: t("reports.exportColAbsenceEvents"),
+        criticalAbsenceRows: t("reports.exportColCriticalAbsenceRows"),
+        teachersCounted: t("reports.exportColTeachersCounted"),
+        learnersCounted: t("reports.exportColLearnersCounted"),
+        notes: t("reports.exportColNotes"),
+        notesText: t("reports.exportNotes"),
+      },
+      columns: {
+        learner: t("reports.colLearner"),
+        email: t("reports.colEmail"),
+        course: t("reports.colCourse"),
+        absenceCountMonth: t("reports.colAbsenceCountMonth"),
+        unresolvedMonth: t("reports.colUnresolvedMonth"),
+        status: t("reports.colAbsenceStatus"),
+        latestDate: t("reports.colLatestDate"),
+        teacher: t("reports.colTeacher"),
+        role: t("reports.colRole"),
+        sessionsTaught: t("reports.colHoursDone"),
+        teachingHours: t("reports.colCompleted"),
+        bookedSessions: t("reports.colTotal"),
+        completedThisMonth: t("reports.colCompletedThisMonth"),
+        sprintNumbers: t("reports.colSprintNumbers"),
+        avgRating: t("reports.colRating"),
+        ratingCount: t("reports.colTimesRated"),
+        rank: t("honor.colRank"),
+      },
+      status: {
+        critical: t("reports.absenceStatusCritical"),
+        unresolved: t("reports.absenceStatusUnresolved"),
+        normal: t("reports.absenceStatusNormal"),
+      },
+      roles: {
+        vietnameseTeacher: t("reports.roleVN"),
+        foreignTeacher: t("reports.roleForeign"),
+      },
+      unknownCourse: t("reports.absenceUnknownCourse"),
+      unknownName: t("reports.exportUnknownName"),
+    }),
+    [t]
+  );
+
   useEffect(() => {
     fetchReports();
   }, [fetchReports]);
@@ -390,6 +462,34 @@ export default function AdminReports() {
     return role;
   };
 
+  const honorMonths = t("honor.months", { returnObjects: true }) as unknown as string[];
+  const exportYears = Array.from({ length: 5 }, (_, i) => vietnamNow.year - 2 + i);
+
+  const handleExportExcel = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setError("");
+    try {
+      const supabase = getSupabase();
+      const report = await fetchMonthlyAdminReport(
+        supabase,
+        exportYear,
+        exportMonth,
+        monthlyExportLabels
+      );
+      const { filename, buffer } = await writeMonthlyReportWorkbook(report, monthlyExportLabels);
+      triggerWorkbookDownload(filename, buffer);
+      if (!monthlyReportHasActivity(report)) {
+        setError(t("reports.exportNoData"));
+      }
+    } catch (err) {
+      console.error("Failed to export monthly report:", err);
+      setError(t("reports.exportFailed"));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div>
       {/* Header */}
@@ -403,13 +503,63 @@ export default function AdminReports() {
               {t("reports.subtitle")}
             </p>
           </div>
-          <button
-            onClick={fetchReports}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-background-100 text-foreground-600 hover:bg-background-200 transition-colors whitespace-nowrap cursor-pointer"
-          >
-            <i className="ri-refresh-line"></i>
-            {t("reports.refresh")}
-          </button>
+          <div className="flex flex-col items-stretch sm:items-end gap-2">
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <label className="sr-only" htmlFor="admin-report-export-year">
+                {t("reports.selectYear")}
+              </label>
+              <select
+                id="admin-report-export-year"
+                value={exportYear}
+                onChange={(e) => setExportYear(Number(e.target.value))}
+                disabled={exporting}
+                className="px-3 py-2 rounded-lg text-sm font-medium bg-background-50 border border-background-200 text-foreground-700 focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {exportYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+              <label className="sr-only" htmlFor="admin-report-export-month">
+                {t("reports.selectMonth")}
+              </label>
+              <select
+                id="admin-report-export-month"
+                value={exportMonth}
+                onChange={(e) => setExportMonth(Number(e.target.value))}
+                disabled={exporting}
+                className="px-3 py-2 rounded-lg text-sm font-medium bg-background-50 border border-background-200 text-foreground-700 focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-400/20 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {honorMonths.map((monthLabel, index) => (
+                  <option key={index + 1} value={index + 1}>
+                    {monthLabel}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                disabled={exporting}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-primary-500 text-background-50 hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap cursor-pointer"
+              >
+                <i className={exporting ? "ri-loader-4-line animate-spin" : "ri-file-excel-2-line"}></i>
+                {exporting ? t("reports.exporting") : t("reports.exportExcel")}
+              </button>
+              <button
+                type="button"
+                onClick={fetchReports}
+                disabled={exporting}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-background-100 text-foreground-600 hover:bg-background-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap cursor-pointer"
+              >
+                <i className="ri-refresh-line"></i>
+                {t("reports.refresh")}
+              </button>
+            </div>
+            <p className="text-xs text-foreground-400 sm:text-right">
+              {t("reports.exportScopeHint", { month: exportMonth, year: exportYear })}
+            </p>
+          </div>
         </div>
       </div>
 
