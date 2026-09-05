@@ -59,6 +59,25 @@ function getSprintStatusColor(status: string): string {
   }
 }
 
+function getSessionCircleClass(status: string): string {
+  switch (status) {
+    case "completed":
+      return "bg-primary-100 text-primary-700";
+    case "in_progress":
+    case "active":
+      return "bg-accent-100 text-accent-700 ring-1 ring-accent-300";
+    case "available":
+      return "bg-orange-100 text-orange-700 ring-1 ring-orange-300";
+    case "awaiting_feedback":
+      return "bg-amber-100 text-amber-800 ring-1 ring-amber-300";
+    case "absent":
+      return "bg-red-100 text-red-700 ring-1 ring-red-300";
+    case "locked":
+    default:
+      return "bg-background-200 text-foreground-400";
+  }
+}
+
 function getSessionTypeLabel(type: string): string {
   const labels: Record<string, string> = {
     self_study: "Self-Study",
@@ -541,14 +560,9 @@ export default function AdminSprints() {
                       {l.sessions.map((s) => (
                         <span
                           key={s.sessionNumber}
-                          className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${
-                            s.status === "completed"
-                              ? "bg-primary-100 text-primary-700"
-                              : s.status === "in_progress"
-                              ? "bg-accent-100 text-accent-700 ring-1 ring-accent-300"
-                              : "bg-background-200 text-foreground-400"
-                          }`}
+                          className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${getSessionCircleClass(s.status)}`}
                           title={"S" + s.sessionNumber + ": " + s.status}
+                          aria-label={`Session ${s.sessionNumber}: ${s.status}`}
                         >
                           {s.sessionNumber}
                         </span>
@@ -908,11 +922,10 @@ export default function AdminSprints() {
                     {detailModal.sessions.map((s) => (
                       <div key={s.sessionNumber} className="flex items-center justify-between p-3 rounded-lg bg-background-100">
                         <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 flex items-center justify-center rounded-full text-xs font-bold ${
-                            s.status === "completed" ? "bg-primary-100 text-primary-700"
-                              : s.status === "in_progress" ? "bg-accent-100 text-accent-700 ring-1 ring-accent-300"
-                              : "bg-background-200 text-foreground-400"
-                          }`}>
+                          <div
+                            className={`w-8 h-8 flex items-center justify-center rounded-full text-xs font-bold ${getSessionCircleClass(s.status)}`}
+                            aria-label={`Session ${s.sessionNumber}: ${s.status}`}
+                          >
                             {s.sessionNumber}
                           </div>
                           <div>
