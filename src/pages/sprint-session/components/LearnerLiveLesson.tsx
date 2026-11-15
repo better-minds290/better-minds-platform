@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { getSupabase } from "@/lib/supabase";
 import { formatVietnamDateTime } from "@/lib/datetime";
+import { classLessonLookup, resolveClassSchedule } from "@/lib/lessonMaterials";
+import LessonAdditionalMaterials from "@/components/feature/LessonAdditionalMaterials";
 import LessonSummaryForm from "./LessonSummaryForm";
 
 interface LearnerLiveLessonProps {
@@ -50,6 +52,7 @@ export default function LearnerLiveLesson({
   const supabase = getSupabase();
 
   const [materials, setMaterials] = useState<MaterialData[]>([]);
+  const [materialsScheduleId, setMaterialsScheduleId] = useState<string | null>(null);
   const [teacherInfo, setTeacherInfo] = useState<TeacherInfo | null>(null);
   const [meetingLink, setMeetingLink] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -120,6 +123,31 @@ export default function LearnerLiveLesson({
             }
           }
         }
+      }
+
+      const classIdForMaterials = (sessionData as { class_id?: string | null } | null)?.class_id || null;
+      if (classIdForMaterials) {
+        const { data: scheduleRows } = await supabase
+          .from("class_schedules")
+          .select("id, class_id, date, start_time, teacher_id")
+          .eq("class_id", classIdForMaterials);
+        const lookup = classLessonLookup(classIdForMaterials, scheduledAt);
+        const match = lookup
+          ? resolveClassSchedule(
+              (scheduleRows || []).map((row: { id: string; class_id: string; date: string; start_time: string | null; teacher_id: string | null }) => ({
+                id: row.id,
+                classId: row.class_id,
+                date: row.date,
+                startTime: row.start_time,
+                teacherId: row.teacher_id,
+              })),
+              lookup,
+              sessionId
+            )
+          : null;
+        setMaterialsScheduleId(match?.id || null);
+      } else {
+        setMaterialsScheduleId(null);
       }
 
       // Fetch all sessions in this sprint for navigation
@@ -400,6 +428,11 @@ export default function LearnerLiveLesson({
                       </div>
                     </a>
                   ))}
+                </div>
+              )}
+              {materialsScheduleId && (
+                <div className="mt-6">
+                  <LessonAdditionalMaterials scheduleId={materialsScheduleId} startOpen />
                 </div>
               )}
             </div>

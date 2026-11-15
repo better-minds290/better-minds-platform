@@ -17,6 +17,7 @@ import {
   type AdminWeekOffset,
 } from "@/lib/adminClassesView";
 import { formatVietnamDateShortVi } from "@/lib/datetime";
+import LessonAdditionalMaterials from "@/components/feature/LessonAdditionalMaterials";
 
 interface ClassData {
   id: string;
@@ -41,6 +42,13 @@ interface ClassData {
     in_progress: number;
     locked: number;
   };
+  schedules: {
+    id: string;
+    teacher_id: string | null;
+    date: string;
+    start_time: string;
+    end_time: string;
+  }[];
 }
 
 function formatTimeShort(time: string): string {
@@ -68,6 +76,7 @@ export default function AdminClasses() {
   // Students panel state
   const [studentsPanelOpen, setStudentsPanelOpen] = useState(false);
   const [studentsPanelClass, setStudentsPanelClass] = useState<ClassData | null>(null);
+  const [materialsClass, setMaterialsClass] = useState<ClassData | null>(null);
 
   const classesRequestRef = useRef(0);
 
@@ -130,7 +139,7 @@ export default function AdminClasses() {
         fetchChunkedClassRows(classIds, (chunk, from, to) =>
           supabase
             .from("class_schedules")
-            .select("class_id, date, start_time, end_time")
+            .select("id, class_id, teacher_id, date, start_time, end_time")
             .in("class_id", [...chunk])
             .order("date")
             .order("start_time")
@@ -167,10 +176,17 @@ export default function AdminClasses() {
       });
 
       // Build schedule map: class_id → [{ date, start_time, end_time }]
-      const scheduleMap = new Map<string, { date: string; start_time: string; end_time: string }[]>();
+      const scheduleMap = new Map<string, ClassData["schedules"]>();
       scheduleRows.forEach((s: any) => {
+        if (!s.id) return;
         if (!scheduleMap.has(s.class_id)) scheduleMap.set(s.class_id, []);
-        scheduleMap.get(s.class_id)!.push({ date: s.date, start_time: s.start_time, end_time: s.end_time });
+        scheduleMap.get(s.class_id)!.push({
+          id: s.id,
+          teacher_id: s.teacher_id || null,
+          date: s.date,
+          start_time: s.start_time,
+          end_time: s.end_time,
+        });
       });
 
       // Build session stats map: class_id → { total, completed, in_progress, locked }
@@ -222,6 +238,7 @@ export default function AdminClasses() {
           student_count: studentCounts.get(c.id) || 0,
           created_at: c.created_at || "",
           schedule_text: scheduleText,
+          schedules: classSchedules,
           is_current_week: isCurrentWeek,
           session_stats: stats,
         };
@@ -535,6 +552,15 @@ export default function AdminClasses() {
                 </div>
               )}
 
+              <button
+                type="button"
+                onClick={() => setMaterialsClass(cls)}
+                className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary-700 hover:text-primary-800 cursor-pointer"
+              >
+                <i className="ri-folder-add-line"></i>
+                {t("lessonMaterials.adminOpen")}
+              </button>
+
               {/* Session status summary */}
               {cls.session_stats.total > 0 && (
                 <div className="mt-2 flex items-center gap-3 flex-wrap">
@@ -633,6 +659,40 @@ export default function AdminClasses() {
                 )}
                 {deleting ? "..." : t("auth.adminDeleteConfirmButton")}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {materialsClass && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-foreground-950/40" onClick={() => setMaterialsClass(null)}></div>
+          <div className="relative mx-4 max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-background-200 bg-background-50 p-5 shadow-lg">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h3 className="font-heading text-lg font-semibold text-foreground-950">{materialsClass.name}</h3>
+              <button type="button" onClick={() => setMaterialsClass(null)} className="text-foreground-400 cursor-pointer">
+                <i className="ri-close-line text-lg"></i>
+              </button>
+            </div>
+            <div className="space-y-3">
+              {materialsClass.schedules
+                .filter((schedule) => {
+                  const week = adminWeekRangeYmd(weekOffset);
+                  return schedule.date >= week.start && schedule.date <= week.end;
+                })
+                .sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time))
+                .map((schedule) => (
+                  <div key={schedule.id} className="rounded-lg border border-background-200 p-3">
+                    <p className="text-xs font-medium text-foreground-600">
+                      {formatVietnamDateShortVi(schedule.date)} {formatTimeShort(schedule.start_time)}–{formatTimeShort(schedule.end_time)}
+                    </p>
+                    <LessonAdditionalMaterials
+                      scheduleId={schedule.id}
+                      scheduleTeacherId={schedule.teacher_id}
+                      startOpen
+                    />
+                  </div>
+                ))}
             </div>
           </div>
         </div>

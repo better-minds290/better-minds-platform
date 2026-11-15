@@ -10,6 +10,7 @@ import CourseProgressBar from "./components/CourseProgressBar";
 import { getSupabase } from "@/lib/supabase";
 import NotificationBell from "@/components/feature/NotificationBell";
 import { formatVietnamDate } from "@/lib/datetime";
+import { classLessonLookup, resolveClassSchedule } from "@/lib/lessonMaterials";
 
 interface DashboardData {
   enrollment: {
@@ -47,6 +48,7 @@ interface DashboardData {
     classId: string | null;
     courseName: string | null;
     courseLevel: string | null;
+    scheduleId: string | null;
   }>;
   classMaterials: Array<{
     id: string;
@@ -237,6 +239,7 @@ function DashboardContent() {
               classId: s.class_id || null,
               courseName: courseName || null,
               courseLevel: courseLevel || null,
+              scheduleId: null,
             }))
             .sort((a: any, b: any) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
         }
@@ -246,14 +249,32 @@ function DashboardContent() {
       let classMaterials: DashboardData["classMaterials"] = [];
       const bookedClassIds = upcomingLessons.map((l) => l.classId).filter(Boolean) as string[];
       if (bookedClassIds.length > 0) {
-        const { data: materialsData } = await supabase
-          .from("class_materials")
-          .select("id, class_id, title, description, file_name, file_url, file_type")
-          .in("class_id", bookedClassIds);
+        const [materialsRes, schedulesRes] = await Promise.all([
+          supabase
+            .from("class_materials")
+            .select("id, class_id, title, description, file_name, file_url, file_type")
+            .in("class_id", bookedClassIds),
+          supabase
+            .from("class_schedules")
+            .select("id, class_id, date, start_time, teacher_id")
+            .in("class_id", bookedClassIds),
+        ]);
 
-        if (materialsData) {
-          classMaterials = materialsData;
+        if (materialsRes.data) {
+          classMaterials = materialsRes.data;
         }
+        const scheduleRefs = (schedulesRes.data || []).map((row: { id: string; class_id: string; date: string; start_time: string | null; teacher_id: string | null }) => ({
+          id: row.id,
+          classId: row.class_id,
+          date: row.date,
+          startTime: row.start_time,
+          teacherId: row.teacher_id,
+        }));
+        upcomingLessons = upcomingLessons.map((lesson) => {
+          const lookup = classLessonLookup(lesson.classId, lesson.scheduledAt);
+          const match = lookup ? resolveClassSchedule(scheduleRefs, lookup, lesson.id) : null;
+          return { ...lesson, scheduleId: match?.id || null };
+        });
       }
 
       const allSprints = sprints || [];

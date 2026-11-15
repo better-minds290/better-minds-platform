@@ -6,6 +6,8 @@ import NotificationBell from "@/components/feature/NotificationBell";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
 import { formatVietnamDate, formatVietnamDateTime } from "@/lib/datetime";
+import { classLessonLookup, resolveClassSchedule, type ClassScheduleRef } from "@/lib/lessonMaterials";
+import LessonAdditionalMaterials from "@/components/feature/LessonAdditionalMaterials";
 
 interface SessionMaterial {
   id: string;
@@ -30,6 +32,8 @@ interface SprintSession {
   lesson_summary: string | null;
   completion_rating: number | null;
   class_id: string | null;
+  schedule_id: string | null;
+  schedule_teacher_id: string | null;
   materials: SessionMaterial[];
 }
 
@@ -309,6 +313,7 @@ function HistoryContent() {
 
         const classIds = [...new Set((sessionRows || []).map((s) => s.class_id).filter(Boolean))] as string[];
         const classMaterialsMap = new Map<string, SessionMaterial[]>();
+        let scheduleRefs: ClassScheduleRef[] = [];
         if (classIds.length > 0) {
           const { data: materials } = await supabase
             .from("class_materials")
@@ -329,6 +334,17 @@ function HistoryContent() {
             });
             classMaterialsMap.set(m.class_id, list);
           });
+          const { data: scheduleRows } = await supabase
+            .from("class_schedules")
+            .select("id, class_id, date, start_time, teacher_id")
+            .in("class_id", classIds);
+          scheduleRefs = (scheduleRows || []).map((row: { id: string; class_id: string; date: string; start_time: string | null; teacher_id: string | null }) => ({
+            id: row.id,
+            classId: row.class_id,
+            date: row.date,
+            startTime: row.start_time,
+            teacherId: row.teacher_id,
+          }));
         }
 
         sprintsWithSessions.push({
@@ -350,6 +366,14 @@ function HistoryContent() {
             lesson_summary: s.lesson_summary,
             completion_rating: s.completion_rating,
             class_id: s.class_id,
+            schedule_id: (() => {
+              const lookup = classLessonLookup(s.class_id, s.scheduled_at);
+              return lookup ? resolveClassSchedule(scheduleRefs, lookup, s.id)?.id || null : null;
+            })(),
+            schedule_teacher_id: (() => {
+              const lookup = classLessonLookup(s.class_id, s.scheduled_at);
+              return lookup ? resolveClassSchedule(scheduleRefs, lookup, s.id)?.teacherId || null : null;
+            })(),
             materials: sprintMatsMap?.get(s.session_number) || classMaterialsMap.get(s.class_id) || [],
           })),
           course: localCourseInfo || { name: "", level: "" },
@@ -1037,6 +1061,13 @@ function HistoryContent() {
                                       {t("history.sessionNoMaterials")}
                                     </p>
                                   </div>
+                                )}
+
+                                {session.schedule_id && (
+                                  <LessonAdditionalMaterials
+                                    scheduleId={session.schedule_id}
+                                    scheduleTeacherId={session.schedule_teacher_id}
+                                  />
                                 )}
                               </div>
                             </div>

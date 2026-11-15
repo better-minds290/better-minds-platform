@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
+import { classLessonLookup, resolveClassSchedule } from "@/lib/lessonMaterials";
+import LessonAdditionalMaterials from "@/components/feature/LessonAdditionalMaterials";
 
 interface TeacherLiveLessonProps {
   sessionId: string;
@@ -51,6 +53,7 @@ export default function TeacherLiveLesson({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [materials, setMaterials] = useState<Array<{ file_name: string; file_path: string; file_size?: number }>>([]);
+  const [materialsLesson, setMaterialsLesson] = useState<{ id: string; teacherId: string | null } | null>(null);
   const [lessonSummary, setLessonSummary] = useState<string | null>(initialLessonSummary || null);
 
   const isSessionOne = sessionNumber === 1;
@@ -205,6 +208,31 @@ export default function TeacherLiveLesson({
             }
           }
         }
+      }
+
+      const classIdForMaterials = (sessionData as { class_id?: string | null } | null)?.class_id || null;
+      if (classIdForMaterials) {
+        const { data: scheduleRows } = await supabase
+          .from("class_schedules")
+          .select("id, class_id, date, start_time, teacher_id")
+          .eq("class_id", classIdForMaterials);
+        const lookup = classLessonLookup(classIdForMaterials, scheduledAt);
+        const match = lookup
+          ? resolveClassSchedule(
+              (scheduleRows || []).map((row: { id: string; class_id: string; date: string; start_time: string | null; teacher_id: string | null }) => ({
+                id: row.id,
+                classId: row.class_id,
+                date: row.date,
+                startTime: row.start_time,
+                teacherId: row.teacher_id,
+              })),
+              lookup,
+              sessionId
+            )
+          : null;
+        setMaterialsLesson(match ? { id: match.id, teacherId: match.teacherId || null } : null);
+      } else {
+        setMaterialsLesson(null);
       }
 
       // Fetch materials
@@ -443,6 +471,14 @@ export default function TeacherLiveLesson({
             ))}
           </div>
         </div>
+      )}
+
+      {materialsLesson && (
+        <LessonAdditionalMaterials
+          scheduleId={materialsLesson.id}
+          scheduleTeacherId={materialsLesson.teacherId}
+          startOpen
+        />
       )}
 
       {/* Lesson Summary — Session 1 only (read-only for teacher) */}

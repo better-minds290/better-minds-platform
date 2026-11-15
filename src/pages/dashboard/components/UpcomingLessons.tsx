@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { calendarDiffDays, formatVietnamDate, formatVietnamTime, toVietnamDateStr, vietnamTodayStr } from "@/lib/datetime";
+import LessonAdditionalMaterials from "@/components/feature/LessonAdditionalMaterials";
 
 interface LessonData {
   id: string;
@@ -15,6 +16,7 @@ interface LessonData {
   classId: string | null;
   courseName: string | null;
   courseLevel: string | null;
+  scheduleId?: string | null;
 }
 
 interface ClassMaterial {
@@ -193,6 +195,11 @@ export default function UpcomingLessons({ lessons, materials }: { lessons: Lesso
                         </a>
                       ))}
                     </div>
+                  </div>
+                )}
+                {lesson.scheduleId && (
+                  <div className="px-4 pb-3">
+                    <LessonAdditionalMaterials scheduleId={lesson.scheduleId} />
                   </div>
                 )}
               </div>

@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
 import { formatVietnamDateTime, getUiDateLocale, toVietnamDateStr } from "@/lib/datetime";
+import { classLessonLookup, resolveClassSchedule, type ClassScheduleRef } from "@/lib/lessonMaterials";
+import LessonAdditionalMaterials from "@/components/feature/LessonAdditionalMaterials";
 import { Link } from "react-router-dom";
 
 interface SprintSession {
@@ -66,6 +68,33 @@ export default function SprintSessionsTab() {
   const [fetchError, setFetchError] = useState(false);
   const [filter, setFilter] = useState<FilterType>("upcoming");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [classSchedules, setClassSchedules] = useState<ClassScheduleRef[]>([]);
+  const [schedulesLoaded, setSchedulesLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!profile?.id) return;
+    let cancelled = false;
+    getSupabase()
+      .from("class_schedules")
+      .select("id, class_id, date, start_time, teacher_id")
+      .eq("teacher_id", profile.id)
+      .then(({ data, error }) => {
+        if (cancelled || error) return;
+        setClassSchedules(
+          (data || []).map((row: { id: string; class_id: string; date: string; start_time: string | null; teacher_id: string | null }) => ({
+            id: row.id,
+            classId: row.class_id,
+            date: row.date,
+            startTime: row.start_time,
+            teacherId: row.teacher_id,
+          }))
+        );
+        setSchedulesLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.id]);
 
   const fetchSessions = useCallback(async () => {
     if (!profile?.id) return;
@@ -484,6 +513,8 @@ export default function SprintSessionsTab() {
             const isExpanded = expandedId === session.id + "-group";
             const studentCount = group.length;
             const studentNames = group.map((s) => s.student_name).join(", ");
+            const lessonLookup = classLessonLookup(session.class_id, session.scheduled_at);
+            const classLesson = lessonLookup ? resolveClassSchedule(classSchedules, lessonLookup, session.id) : null;
             const avgProgress = group.length > 0
               ? Math.round(group.reduce((sum, s) => sum + (s.total_sessions > 0 ? Math.round((s.completed_sessions / s.total_sessions) * 100) : 0), 0) / group.length)
               : 0;
@@ -771,6 +802,18 @@ export default function SprintSessionsTab() {
                         {session.session_description}
                       </p>
                     </div>
+                  )}
+
+                  {session.class_id && schedulesLoaded && (
+                    classLesson ? (
+                      <LessonAdditionalMaterials
+                        scheduleId={classLesson.id}
+                        scheduleTeacherId={classLesson.teacherId || profile?.id || null}
+                        startOpen
+                      />
+                    ) : (
+                      <p className="text-xs text-foreground-500">{t("lessonMaterials.noSchedule")}</p>
+                    )
                   )}
                 </div>
               )}
