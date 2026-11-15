@@ -1,5 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  areAllEnrolledLearnersAbsent,
+  canCallerCompleteTaughtSession,
+  canCallerSubmitSessionOne,
+  isFullyGradedPresent,
+  isVerifiedAbsent,
+  shouldCompleteClassSchedule,
+  shouldPreserveStoredFeedback,
+  type EnrolledLearnerState,
+} from "../_shared/classAttendancePolicy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -53,6 +63,68 @@ serve(async (req: Request) => {
     }
 
     debugLog.push(`[2] Session: sprint=${session.sprint_id}, class=${session.class_id}, status=${session.status}, num=${session.session_number}`);
+
+    const authHeader = req.headers.get("Authorization")?.replace("Bearer ", "");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Unauthorized", debug: debugLog }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const { data: { user: caller }, error: authError } = await supabaseClient.auth.getUser(authHeader);
+    if (authError || !caller) {
+      return new Response(JSON.stringify({ error: "Unauthorized", debug: debugLog }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const { data: callerProfile } = await supabaseClient
+      .from("profiles")
+      .select("role")
+      .eq("id", caller.id)
+      .maybeSingle();
+
+    const { data: callerSprint } = await supabaseClient
+      .from("learning_sprints")
+      .select("enrollment_id")
+      .eq("id", session.sprint_id)
+      .maybeSingle();
+    let callerSessionLearnerId: string | null = null;
+    if (callerSprint?.enrollment_id) {
+      const { data: callerEnroll } = await supabaseClient
+        .from("enrollments")
+        .select("learner_id")
+        .eq("id", callerSprint.enrollment_id)
+        .maybeSingle();
+      callerSessionLearnerId = callerEnroll?.learner_id || null;
+    }
+
+    if (session.session_number === 1) {
+      if (
+        !canCallerSubmitSessionOne({
+          callerId: caller.id,
+          callerRole: callerProfile?.role || null,
+          learnerId: callerSessionLearnerId,
+          sessionTeacherId: session.teacher_id,
+        })
+      ) {
+        return new Response(JSON.stringify({ error: "Forbidden", debug: debugLog }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    } else if (
+      !canCallerCompleteTaughtSession({
+        callerId: caller.id,
+        callerRole: callerProfile?.role || null,
+        sessionTeacherId: session.teacher_id,
+      })
+    ) {
+      return new Response(JSON.stringify({ error: "Forbidden", debug: debugLog }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // ── CASE S1: Session 1 (self-study) — learner submits lesson summary ──
     if (session.session_number === 1) {
@@ -112,126 +184,132 @@ serve(async (req: Request) => {
     }
 
     // ── CASE A: Session has class_id → grade via session_attendance (Sessions 2 & 3) ──
-    if (session.class_id && grades && Array.isArray(grades) && grades.length > 0) {
-      // ⛔ FILTER: only save students who have REAL feedback (non-empty)
-      const validGrades = grades.filter(
-        (g: StudentGrade) =>
-          g.student_id &&
-          g.grade >= 1 && g.grade <= 5 &&
-          g.feedback && g.feedback.trim().length > 0
-      );
+    if (session.class_id && Array.isArray(grades)) {
+      const { data: classEnrollments, error: enrollErr } = await supabaseClient
+        .from("class_enrollments")
+        .select("student_id")
+        .eq("class_id", session.class_id);
 
-      debugLog.push(`[3] Received ${grades.length} grade(s), ${validGrades.length} valid (with feedback). Skipped ${grades.length - validGrades.length} entries without feedback.`);
-
-      if (validGrades.length === 0) {
-        // Check if all students are absent — if so, complete the CLASS SCHEDULE but NOT the sprint
-        const { data: scheduleAbsent } = await supabaseClient
-          .from("class_schedules")
-          .select("id")
-          .eq("class_id", session.class_id)
-          .maybeSingle();
-
-        if (scheduleAbsent) {
-          const { data: attCheck } = await supabaseClient
-            .from("session_attendance")
-            .select("id, status")
-            .eq("schedule_id", scheduleAbsent.id);
-
-          const allAbsent = attCheck && attCheck.length > 0 && attCheck.every((a: any) => a.status === "absent");
-
-          if (allAbsent) {
-            debugLog.push("[3-absent] All students absent — completing class schedule (sprint stays active)");
-
-            // Complete class schedule (for calendar display — teacher fulfilled duty)
-            await supabaseClient
-              .from("class_schedules")
-              .update({ status: "completed" })
-              .eq("id", scheduleAbsent.id);
-
-            // Complete class_enrollments
-            await supabaseClient
-              .from("class_enrollments")
-              .update({ status: "completed" })
-              .eq("class_id", session.class_id);
-
-            // Get all sprint_sessions for this class and mark them as absent
-            const { data: classSessions } = await supabaseClient
-              .from("sprint_sessions")
-              .select("id, sprint_id")
-              .eq("class_id", session.class_id);
-
-            for (const cs of (classSessions || [])) {
-              await supabaseClient
-                .from("sprint_sessions")
-                .update({
-                  status: "absent",
-                  completed_at: new Date().toISOString(),
-                  completion_rating: null,
-                  feedback: "Học viên vắng học",
-                })
-                .eq("id", cs.id);
-            }
-
-            // ⛔ DO NOT check sprint completion — absent sessions don't complete sprints
-            // Sprint stays active; admin can force-complete if needed
-
-            return new Response(
-              JSON.stringify({
-                success: true,
-                session_completed: true,
-                all_absent: true,
-                graded_count: 0,
-                total_students: attCheck.length,
-                message: "Tất cả học viên vắng. Lớp đã được đánh dấu hoàn thành trên lịch, nhưng Sprint của học viên chưa được hoàn thành.",
-                debug: debugLog,
-              }),
-              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-          }
-        }
-
+      if (enrollErr) {
         return new Response(
-          JSON.stringify({
-            success: true,
-            session_completed: false,
-            graded_count: 0,
-            total_students: 0,
-            message: "No valid grades with feedback provided. Each student needs both a grade and feedback.",
-            debug: debugLog,
-          }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({ error: "Failed to load class roster", detail: enrollErr.message, debug: debugLog }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      const { data: schedule } = await supabaseClient
+      const enrolledIds = [...new Set((classEnrollments || []).map((row: { student_id: string }) => row.student_id).filter(Boolean))];
+      if (enrolledIds.length === 0) {
+        return new Response(
+          JSON.stringify({ error: "No learners enrolled in this class", debug: debugLog }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const { data: classSchedules, error: schedListErr } = await supabaseClient
         .from("class_schedules")
-        .select("id")
-        .eq("class_id", session.class_id)
-        .maybeSingle();
+        .select("id, class_id, status")
+        .eq("class_id", session.class_id);
 
-      const scheduleId = schedule?.id || null;
-      debugLog.push(`[3a] schedule_id=${scheduleId}`);
-
-      if (!scheduleId) {
+      if (schedListErr) {
+        return new Response(
+          JSON.stringify({ error: "Failed to load class schedules", detail: schedListErr.message, debug: debugLog }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (!classSchedules || classSchedules.length === 0) {
         return new Response(
           JSON.stringify({ error: "No class_schedule found for this class", debug: debugLog }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+      if (classSchedules.length > 1) {
+        return new Response(
+          JSON.stringify({ error: "Ambiguous class schedule", debug: debugLog }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
-      // Build existing attendance map
-      const { data: existingAttendance } = await supabaseClient
+      const scheduleId = classSchedules[0].id;
+      debugLog.push(`[3a] schedule_id=${scheduleId} roster=${enrolledIds.length}`);
+
+      const { data: classSessions, error: classSessErr } = await supabaseClient
+        .from("sprint_sessions")
+        .select("id, sprint_id, status")
+        .eq("class_id", session.class_id);
+
+      if (classSessErr) {
+        return new Response(
+          JSON.stringify({ error: "Failed to load class sessions", detail: classSessErr.message, debug: debugLog }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const uniqueSprintIds = [...new Set((classSessions || []).map((s: { sprint_id: string }) => s.sprint_id))];
+      const { data: sprintRows } = uniqueSprintIds.length
+        ? await supabaseClient.from("learning_sprints").select("id, enrollment_id").in("id", uniqueSprintIds)
+        : { data: [] as { id: string; enrollment_id: string }[] };
+
+      const sprintEnrollMap = new Map<string, string>();
+      (sprintRows || []).forEach((sp: { id: string; enrollment_id: string }) => sprintEnrollMap.set(sp.id, sp.enrollment_id));
+      const enrollmentIds = [...new Set((sprintRows || []).map((sp: { enrollment_id: string }) => sp.enrollment_id).filter(Boolean))];
+      const { data: enrollRows } = enrollmentIds.length
+        ? await supabaseClient.from("enrollments").select("id, learner_id").in("id", enrollmentIds)
+        : { data: [] as { id: string; learner_id: string }[] };
+      const enrollLearnerMap = new Map<string, string>();
+      (enrollRows || []).forEach((e: { id: string; learner_id: string }) => enrollLearnerMap.set(e.id, e.learner_id));
+
+      const sessionByLearner = new Map<string, { id: string; sprint_id: string; status: string }>();
+      for (const cs of classSessions || []) {
+        const enrollmentId = sprintEnrollMap.get(cs.sprint_id);
+        const learnerId = enrollmentId ? enrollLearnerMap.get(enrollmentId) : null;
+        if (learnerId) sessionByLearner.set(learnerId, cs);
+      }
+
+      const { data: existingAttendance, error: attLoadErr } = await supabaseClient
         .from("session_attendance")
-        .select("id, student_id, status")
+        .select("id, student_id, status, grade, teacher_feedback")
         .eq("schedule_id", scheduleId);
 
-      const existingMap = new Map<string, { id: string; status: string }>();
-      (existingAttendance || []).forEach((a: any) => existingMap.set(a.student_id, { id: a.id, status: a.status }));
+      if (attLoadErr) {
+        return new Response(
+          JSON.stringify({ error: "Failed to load attendance", detail: attLoadErr.message, debug: debugLog }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
-      // Upsert ONLY valid grades (those with real feedback)
+      const existingMap = new Map<string, { id: string; status: string; grade: number | null; teacher_feedback: string | null }>();
+      (existingAttendance || []).forEach((a: { id: string; student_id: string; status: string; grade: number | null; teacher_feedback: string | null }) => {
+        existingMap.set(a.student_id, {
+          id: a.id,
+          status: a.status,
+          grade: a.grade,
+          teacher_feedback: a.teacher_feedback,
+        });
+      });
+
+      const enrolledSet = new Set(enrolledIds);
+      const validGrades = grades.filter(
+        (g: StudentGrade) =>
+          g.student_id &&
+          enrolledSet.has(g.student_id) &&
+          g.grade >= 1 && g.grade <= 5 &&
+          g.feedback && g.feedback.trim().length > 0
+      );
+
+      debugLog.push(`[3] Received ${grades.length} grade(s), ${validGrades.length} valid for enrolled learners.`);
+
+      let writeFailed = false;
       let gradedCount = 0;
       for (const g of validGrades) {
         const existing = existingMap.get(g.student_id);
+        if (existing && shouldPreserveStoredFeedback(existing)) {
+          debugLog.push(`[3] Preserving stored feedback for ${g.student_id}`);
+          continue;
+        }
+        if (existing?.status === "absent") {
+          debugLog.push(`[3] Skip grade for absent ${g.student_id}`);
+          continue;
+        }
 
         if (existing) {
           const { error: updErr } = await supabaseClient
@@ -242,12 +320,12 @@ serve(async (req: Request) => {
               status: "present",
               marked_at: new Date().toISOString(),
             })
-            .eq("id", existing.id);
-
+            .eq("id", existing.id)
+            .eq("student_id", g.student_id);
           if (updErr) {
             debugLog.push(`[ERR] Update failed for student ${g.student_id}: ${updErr.message}`);
+            writeFailed = true;
           } else {
-            debugLog.push(`[OK] Updated student ${g.student_id}: ${g.grade}/5, feedback=${g.feedback.substring(0, 30)}...`);
             gradedCount++;
           }
         } else {
@@ -262,88 +340,75 @@ serve(async (req: Request) => {
               status: "present",
               marked_at: new Date().toISOString(),
             });
-
           if (insErr) {
             debugLog.push(`[ERR] Insert failed for student ${g.student_id}: ${insErr.message}`);
+            writeFailed = true;
           } else {
-            debugLog.push(`[OK] Inserted student ${g.student_id}: ${g.grade}/5, feedback=${g.feedback.substring(0, 30)}...`);
             gradedCount++;
           }
         }
       }
 
-      // ⛔ CRITICAL: Re-check attendance — only count PRESENT students for grading
-      const { data: allAttendance } = await supabaseClient
+      if (writeFailed) {
+        return new Response(
+          JSON.stringify({ error: "Failed to save one or more grades", session_completed: false, debug: debugLog }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const { data: allAttendance, error: attReloadErr } = await supabaseClient
         .from("session_attendance")
         .select("id, student_id, grade, teacher_feedback, status")
         .eq("schedule_id", scheduleId);
 
-      const totalStudents = allAttendance?.length || 0;
-      const absentCount = allAttendance?.filter((a: any) => a.status === "absent").length || 0;
-      const presentStudents = totalStudents - absentCount;
-      const fullyGradedStudents = allAttendance?.filter(
-        (a: any) => a.status !== "absent" && a.grade !== null && a.teacher_feedback && a.teacher_feedback.trim().length > 0
-      ).length || 0;
+      if (attReloadErr) {
+        return new Response(
+          JSON.stringify({ error: "Failed to reload attendance", detail: attReloadErr.message, debug: debugLog }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
-      debugLog.push(`[4] Attendance check: ${fullyGradedStudents}/${presentStudents} present fully graded, ${absentCount} absent, ${totalStudents} total`);
+      const learnerStates: EnrolledLearnerState[] = enrolledIds.map((studentId) => {
+        const att = (allAttendance || []).find((a: { student_id: string }) => a.student_id === studentId);
+        const sess = sessionByLearner.get(studentId);
+        return {
+          studentId,
+          sessionId: sess?.id || null,
+          attendanceStatus: att?.status || null,
+          sessionStatus: sess?.status || null,
+          grade: att?.grade ?? null,
+          feedback: att?.teacher_feedback ?? null,
+        };
+      });
 
-      // ⛔ ONLY complete when ALL PRESENT students have BOTH grade AND real feedback
-      if (fullyGradedStudents >= presentStudents && totalStudents > 0) {
-        debugLog.push(`[4] ALL ${presentStudents} present students fully graded — completing class schedule!`);
+      const allAbsent = areAllEnrolledLearnersAbsent(learnerStates);
+      if (validGrades.length === 0 && !allAbsent) {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            session_completed: false,
+            graded_count: 0,
+            total_students: enrolledIds.length,
+            message: "No valid grades with feedback provided. Each student needs both a grade and feedback.",
+            debug: debugLog,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
-        // Build student_id → { grade, feedback } map (only present students)
-        const studentGradeMap = new Map<string, { grade: number; feedback: string }>();
-        (allAttendance || []).forEach((a: any) => {
-          if (a.student_id && a.status !== "absent" && a.grade && a.teacher_feedback) {
-            studentGradeMap.set(a.student_id, {
-              grade: a.grade,
-              feedback: a.teacher_feedback,
-            });
-          }
-        });
+      const absentSprintIds = new Set<string>();
+      const completedSprintIds = new Set<string>();
 
-        // Get all sprint_sessions for this class
-        const { data: classSessions } = await supabaseClient
-          .from("sprint_sessions")
-          .select("id, sprint_id")
-          .eq("class_id", session.class_id);
+      for (const learner of learnerStates) {
+        const sess = sessionByLearner.get(learner.studentId);
+        if (!sess) {
+          debugLog.push(`[5] Learner ${learner.studentId}: no matching sprint session, skipped`);
+          continue;
+        }
 
-        // Resolve sprint_id → learner_id for each sprint_session
-        const uniqueSprintIds = [...new Set((classSessions || []).map((s: any) => s.sprint_id))];
-
-        const { data: sprintRows } = await supabaseClient
-          .from("learning_sprints")
-          .select("id, enrollment_id")
-          .in("id", uniqueSprintIds);
-
-        const sprintEnrollMap = new Map<string, string>();
-        (sprintRows || []).forEach((sp: any) => sprintEnrollMap.set(sp.id, sp.enrollment_id));
-
-        const enrollmentIds = [...new Set((sprintRows || []).map((sp: any) => sp.enrollment_id))];
-        const { data: enrollRows } = await supabaseClient
-          .from("enrollments")
-          .select("id, learner_id")
-          .in("id", enrollmentIds);
-
-        const enrollLearnerMap = new Map<string, string>();
-        (enrollRows || []).forEach((e: any) => enrollLearnerMap.set(e.id, e.learner_id));
-
-        // Update each sprint_session with ITS OWN student's grade + feedback
-        let updatedCount = 0;
-        let absentSprintIds = new Set<string>();
-        for (const cs of (classSessions || [])) {
-          const enrollmentId = sprintEnrollMap.get(cs.sprint_id);
-          const learnerId = enrollmentId ? enrollLearnerMap.get(enrollmentId) : null;
-          const studentGrade = learnerId ? studentGradeMap.get(learnerId) : null;
-
-          // Also check if this student is absent in the attendance
-          const isAbsent = (allAttendance || []).some(
-            (a: any) => a.student_id === learnerId && a.status === "absent"
-          );
-
-          if (isAbsent) {
-            // ⛔ Set status to "absent" — sprint will NOT complete for this learner
-            await supabaseClient
+        if (isVerifiedAbsent(learner)) {
+          if (sess.status !== "absent") {
+            const { error: absErr } = await supabaseClient
               .from("sprint_sessions")
               .update({
                 status: "absent",
@@ -351,97 +416,114 @@ serve(async (req: Request) => {
                 completion_rating: null,
                 feedback: "Học viên vắng học",
               })
-              .eq("id", cs.id);
-            absentSprintIds.add(cs.sprint_id);
-            updatedCount++;
-            debugLog.push(`[5] Sprint session ${cs.id}: learner absent, marked as 'absent'`);
-          } else if (studentGrade) {
-            await supabaseClient
-              .from("sprint_sessions")
-              .update({
-                completion_rating: studentGrade.grade,
-                feedback: studentGrade.feedback,
-                status: "completed",
-                completed_at: new Date().toISOString(),
-              })
-              .eq("id", cs.id);
-            updatedCount++;
-            debugLog.push(`[5] Sprint session ${cs.id}: grade=${studentGrade.grade}, feedback=${studentGrade.feedback ? "yes" : "no"}`);
+              .eq("id", sess.id);
+            if (absErr) {
+              debugLog.push(`[ERR] Absent session update failed ${sess.id}: ${absErr.message}`);
+              writeFailed = true;
+            }
+          }
+          absentSprintIds.add(sess.sprint_id);
+        } else if (isFullyGradedPresent(learner)) {
+          const { error: cmpErr } = await supabaseClient
+            .from("sprint_sessions")
+            .update({
+              completion_rating: learner.grade,
+              feedback: learner.feedback,
+              status: "completed",
+              completed_at: new Date().toISOString(),
+            })
+            .eq("id", sess.id);
+          if (cmpErr) {
+            debugLog.push(`[ERR] Complete session update failed ${sess.id}: ${cmpErr.message}`);
+            writeFailed = true;
           } else {
-            debugLog.push(`[5] Sprint session ${cs.id}: no grade mapping found (learner not matched), skipping`);
+            completedSprintIds.add(sess.sprint_id);
           }
+        } else {
+          debugLog.push(`[5] Learner ${learner.studentId}: not yet handled`);
         }
+      }
 
-        debugLog.push(`[5] Updated ${updatedCount}/${classSessions?.length || 0} sprint_sessions`);
-
-        // ⛔ ALWAYS mark class_schedule as completed (for calendar — teacher fulfilled duty)
-        await supabaseClient
-          .from("class_schedules")
-          .update({ status: "completed" })
-          .eq("id", scheduleId);
-
-        // Mark class_enrollments as completed
-        await supabaseClient
-          .from("class_enrollments")
-          .update({ status: "completed" })
-          .eq("class_id", session.class_id);
-
-        debugLog.push(`[5b] Class schedule + enrollments marked completed`);
-
-        // Send notifications to each PRESENT student
-        for (const a of (allAttendance || [])) {
-          if (a.student_id && a.status !== "absent" && a.grade !== null && a.teacher_feedback) {
-            await supabaseClient.from("notifications").insert({
-              user_id: a.student_id,
-              title: "Buổi học đã được đánh giá",
-              message: `Giáo viên đã đánh giá buổi ${session.session_number} của bạn: ${a.grade}/5 sao. Xem nhận xét trong Lịch Sử Học Tập!`,
-              type: "feedback",
-              is_read: false,
-              created_at: new Date().toISOString(),
-            });
-          }
-        }
-
-        // Check sprint completion ONLY for sprints WITHOUT absent learners
-        // Sprints with absent sessions stay active (admin can force-complete)
-        for (const sid of uniqueSprintIds) {
-          if (!absentSprintIds.has(sid)) {
-            await checkSprintCompletion(supabaseClient, sid, session.session_number, debugLog);
-          } else {
-            debugLog.push(`[SC] Sprint ${sid}: has absent learner — sprint stays active (not completed)`);
-          }
-        }
-
+      if (writeFailed) {
         return new Response(
-          JSON.stringify({
-            success: true,
-            session_completed: true,
-            graded_count: fullyGradedStudents,
-            total_students: totalStudents,
-            absent_count: absentCount,
-            per_student_grades: true,
-            debug: debugLog,
-          }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({ error: "Failed to update one or more sprint sessions", session_completed: false, debug: debugLog }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
-      } else {
-        // ⛔ Partial grading — grades ARE saved, but session stays open
-        debugLog.push(`[4] Partial grading: ${fullyGradedStudents}/${presentStudents} present students fully graded (${absentCount} absent). Session NOT completed.`);
+      }
 
+      const classDone = shouldCompleteClassSchedule(learnerStates);
+      for (const sid of completedSprintIds) {
+        await checkSprintCompletion(supabaseClient, sid, session.session_number, debugLog);
+      }
+      if (!classDone) {
+        const handled = learnerStates.filter((l) => isFullyGradedPresent(l) || isVerifiedAbsent(l)).length;
+        debugLog.push(`[4] Partial: ${handled}/${learnerStates.length} enrolled learners handled. Class NOT completed.`);
         return new Response(
           JSON.stringify({
             success: true,
             session_completed: false,
-            graded_count: fullyGradedStudents,
-            present_students: presentStudents,
-            absent_count: absentCount,
-            total_students: totalStudents,
-            message: `${fullyGradedStudents}/${presentStudents} học viên có mặt đã được chấm đầy đủ. Cần chấm hết ${presentStudents} học viên có mặt để hoàn thành buổi học.`,
+            graded_count: gradedCount,
+            total_students: enrolledIds.length,
+            absent_count: learnerStates.filter(isVerifiedAbsent).length,
+            message: `${handled}/${enrolledIds.length} học viên đã được xử lý. Cần xử lý hết học viên trong lớp để hoàn thành buổi học.`,
             debug: debugLog,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+
+      const { error: schedUpdErr } = await supabaseClient
+        .from("class_schedules")
+        .update({ status: "completed" })
+        .eq("id", scheduleId);
+      if (schedUpdErr) {
+        return new Response(
+          JSON.stringify({ error: "Failed to complete class schedule", detail: schedUpdErr.message, debug: debugLog }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const { error: classEnrollUpdErr } = await supabaseClient
+        .from("class_enrollments")
+        .update({ status: "completed" })
+        .eq("class_id", session.class_id);
+      if (classEnrollUpdErr) {
+        return new Response(
+          JSON.stringify({ error: "Failed to complete class enrollments", detail: classEnrollUpdErr.message, debug: debugLog }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      for (const a of allAttendance || []) {
+        if (a.student_id && a.status !== "absent" && a.grade !== null && a.teacher_feedback) {
+          await supabaseClient.from("notifications").insert({
+            user_id: a.student_id,
+            title: "Buổi học đã được đánh giá",
+            message: `Giáo viên đã đánh giá buổi ${session.session_number} của bạn: ${a.grade}/5 sao. Xem nhận xét trong Lịch Sử Học Tập!`,
+            type: "feedback",
+            is_read: false,
+            created_at: new Date().toISOString(),
+          });
+        }
+      }
+
+      for (const sid of absentSprintIds) {
+        debugLog.push(`[SC] Sprint ${sid}: has absent learner — sprint stays active (not completed)`);
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          session_completed: true,
+          all_absent: allAbsent,
+          graded_count: learnerStates.filter(isFullyGradedPresent).length,
+          total_students: enrolledIds.length,
+          absent_count: learnerStates.filter(isVerifiedAbsent).length,
+          per_student_grades: true,
+          debug: debugLog,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     // ── CASE B: No class_id → grade directly on sprint_session (1:1 session, Sessions 2 & 3) ──

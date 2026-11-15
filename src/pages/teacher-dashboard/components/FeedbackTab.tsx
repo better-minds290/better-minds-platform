@@ -5,9 +5,18 @@ import { getSupabase } from "@/lib/supabase";
 import { formatVietnamDateTime, getUiDateLocale } from "@/lib/datetime";
 import {
   buildTeacherFeedbackSubmitGrades,
+  canMutateLearnerOnCard,
   canShowAllAbsentSessionComplete,
   canShowTeacherFeedbackSubmit,
+  canTeacherDiscoverFeedbackRow,
+  feedbackDraftKey,
+  groupTeacherFeedbackCards,
   isPendingTeacherFeedbackSession,
+  type FeedbackAttendanceRow,
+  type FeedbackEnrollmentRow,
+  type FeedbackProfileRow,
+  type FeedbackScheduleRow,
+  type FeedbackSessionRow,
 } from "@/lib/teacherFeedback";
 
 interface SessionStudent {
@@ -18,9 +27,17 @@ interface SessionStudent {
   feedback: string | null;
   attendanceId: string | null;
   attendanceStatus: string | null;
+  sessionId: string | null;
+  sprintId: string | null;
+  sprintNumber: number | null;
+  enrollmentId: string | null;
+  sessionStatus: string | null;
+  courseName: string | null;
+  mutationBlockedReason: "missing_session" | "ambiguous_schedule" | null;
 }
 
 interface PendingSession {
+  cardId: string;
   sessionId: string;
   sprintId: string;
   sprintNumber: number;
@@ -32,6 +49,7 @@ interface PendingSession {
   students: SessionStudent[];
   classId: string | null;
   scheduleId: string | null;
+  scheduleAmbiguous: boolean;
 }
 
 const ratingColors = ["bg-accent-400", "bg-secondary-400", "bg-secondary-300", "bg-primary-300", "bg-primary-400"];
@@ -63,68 +81,45 @@ export default function FeedbackTab() {
 
   const markStudentAbsent = async (session: PendingSession, student: SessionStudent): Promise<boolean> => {
     if (markingAbsentLock.current) return false;
-    const key = `${session.sessionId}_${student.studentId}`;
+    if (!canMutateLearnerOnCard({ scheduleAmbiguous: session.scheduleAmbiguous, learner: student })) {
+      setErrorMsg(session.scheduleAmbiguous ? t("feedback.ambiguousSchedule") : t("feedback.unlinkedLearner"));
+      setTimeout(() => setErrorMsg(null), 4000);
+      return false;
+    }
+    if (!student.sessionId || !session.scheduleId) {
+      setErrorMsg(t("feedback.markAbsentError"));
+      setTimeout(() => setErrorMsg(null), 4000);
+      return false;
+    }
+    const key = feedbackDraftKey(student.sessionId, student.studentId);
     markingAbsentLock.current = true;
     setMarkingAbsent(key);
     setErrorMsg(null);
 
     try {
-      const { data: authData } = await supabase.auth.getSession();
-
-      const scheduleId = session.scheduleId;
-
-      // Get enrollment info
-      const { data: sprintData } = await supabase
-        .from("learning_sprints")
-        .select("enrollment_id")
-        .eq("id", session.sprintId)
-        .maybeSingle();
-
-      let enrollmentId = null;
-      let learnerName = student.studentName;
-      const courseName = session.courseName;
-
-      if (sprintData?.enrollment_id) {
-        enrollmentId = sprintData.enrollment_id;
-        const { data: enrollData } = await supabase
-          .from("enrollments")
-          .select("learner_id")
-          .eq("id", enrollmentId)
-          .maybeSingle();
-
-        if (enrollData?.learner_id) {
-          const { data: learnerProf } = await supabase
-            .from("profiles")
-            .select("full_name")
-            .eq("id", enrollData.learner_id)
-            .maybeSingle();
-          learnerName = learnerProf?.full_name || student.studentName;
-        }
-      }
-
-      const { error: fnErr } = await supabase.functions.invoke("record-learner-attendance", {
+      const { data: result, error: fnErr } = await supabase.functions.invoke("record-learner-attendance", {
         body: {
           action: "mark_absent",
           student_id: student.studentId,
-          session_id: session.sessionId,
-          schedule_id: scheduleId,
+          session_id: student.sessionId,
+          schedule_id: session.scheduleId,
           class_id: session.classId || null,
           session_number: session.sessionNumber,
-          sprint_id: session.sprintId,
-          sprint_number: session.sprintNumber,
-          enrollment_id: enrollmentId,
-          course_name: courseName,
-          learner_name: learnerName,
+          sprint_id: student.sprintId,
+          sprint_number: student.sprintNumber,
+          enrollment_id: student.enrollmentId,
+          course_name: student.courseName || session.courseName,
+          learner_name: student.studentName,
         },
       });
 
       if (fnErr) throw new Error(fnErr.message);
+      if (result?.error) throw new Error(result.error);
 
-      // Mark as absent locally
       setAbsentStudents((prev) => {
-        const sessionSet = new Set(prev[session.sessionId] || []);
+        const sessionSet = new Set(prev[session.cardId] || []);
         sessionSet.add(student.studentId);
-        return { ...prev, [session.sessionId]: sessionSet };
+        return { ...prev, [session.cardId]: sessionSet };
       });
 
       const absentFeedback = t("feedback.absentFeedback");
@@ -135,12 +130,18 @@ export default function FeedbackTab() {
 
       setSessions((prev) =>
         prev.map((s) => {
-          if (s.sessionId !== session.sessionId) return s;
+          if (s.cardId !== session.cardId) return s;
           return {
             ...s,
             students: s.students.map((st) => {
               if (st.studentId !== student.studentId) return st;
-              return { ...st, grade: 0, feedback: absentFeedback, attendanceStatus: "absent" };
+              return {
+                ...st,
+                grade: 0,
+                feedback: absentFeedback,
+                attendanceStatus: "absent",
+                sessionStatus: "absent",
+              };
             }),
           };
         })
@@ -148,57 +149,6 @@ export default function FeedbackTab() {
 
       setAbsentSuccess(key);
       setTimeout(() => setAbsentSuccess(null), 3000);
-
-      const newAbsentSet = new Set(absentStudents[session.sessionId] || []);
-      newAbsentSet.add(student.studentId);
-
-      const allDone = session.students.every((st) => {
-        if (st.studentId === student.studentId) return true;
-        if (st.attendanceStatus === "absent" || absentStudents[session.sessionId]?.has(st.studentId)) return true;
-        const sk = `${session.sessionId}_${st.studentId}`;
-        const sg = studentGrades[sk];
-        return sg && sg.feedback && sg.feedback.trim().length > 0;
-      });
-
-      if (allDone) {
-        const teacherId = authData?.session?.user?.id;
-        const gradesForSubmit = session.students.map((st) => {
-          if (st.studentId === student.studentId) {
-            return { student_id: st.studentId, grade: 0, feedback: absentFeedback };
-          }
-          if (st.attendanceStatus === "absent" || absentStudents[session.sessionId]?.has(st.studentId)) {
-            return { student_id: st.studentId, grade: 0, feedback: absentFeedback };
-          }
-          const sk = `${session.sessionId}_${st.studentId}`;
-          const sg = studentGrades[sk];
-          return {
-            student_id: st.studentId,
-            grade: sg?.grade || st.grade || 3,
-            feedback: sg?.feedback || st.feedback || "",
-          };
-        });
-
-        const { error: completeErr } = await supabase.functions.invoke("complete-session", {
-          body: {
-            session_id: session.sessionId,
-            teacher_id: teacherId,
-            grades: gradesForSubmit,
-          },
-        });
-
-        if (!completeErr) {
-          setSessions((prev) =>
-            prev.map((s) =>
-              s.sessionId === session.sessionId
-                ? { ...s, status: "completed" }
-                : s
-            )
-          );
-          setSaveSuccess(session.sessionId);
-          setTimeout(() => setSaveSuccess(null), 3000);
-          setExpandedId(null);
-        }
-      }
       return true;
     } catch (err: any) {
       setErrorMsg(err?.message || t("feedback.markAbsentError"));
@@ -226,150 +176,150 @@ export default function FeedbackTab() {
     setLoading(true);
     setFetchError(false);
     try {
-      // Fetch sessions that need grading or have been graded
       const { data: sessionsData, error: sessionsErr } = await supabase
         .from("sprint_sessions")
         .select(`
-          id, sprint_id, session_number, session_type, status, scheduled_at, class_id,
-          teacher_feedback, completion_rating,
+          id, sprint_id, session_number, session_type, status, scheduled_at, class_id, teacher_id,
+          teacher_feedback, completion_rating, feedback,
           sprint:learning_sprints!sprint_id(
             sprint_number, status,
             enrollment:enrollments!learning_sprints_enrollment_id_fkey(
-              learner_id,
+              id, learner_id,
               course:courses!enrollments_course_id_fkey(name)
             )
           )
         `)
         .eq("teacher_id", profile.id)
-        .in("status", ["awaiting_feedback", "completed"])
+        .in("status", ["awaiting_feedback", "completed", "absent"])
         .neq("session_type", "self_study")
         .order("session_number", { ascending: false });
 
       if (sessionsErr) throw sessionsErr;
 
-      if (!sessionsData || sessionsData.length === 0) {
+      const visible = (sessionsData || []).filter((row: { teacher_id: string | null; status: string; session_type: string; class_id: string | null }) =>
+        canTeacherDiscoverFeedbackRow({
+          teacherId: row.teacher_id || profile.id,
+          status: row.status,
+          sessionType: row.session_type,
+          classId: row.class_id,
+        })
+      );
+
+      if (visible.length === 0) {
         setSessions([]);
         setLoading(false);
         return;
       }
 
-      const result: PendingSession[] = [];
+      const sessionRows: FeedbackSessionRow[] = visible.map((row: Record<string, unknown>) => {
+        const sprint = row.sprint as {
+          sprint_number?: number;
+          enrollment?: { id?: string; learner_id?: string; course?: { name?: string } };
+        } | null;
+        return {
+          id: row.id as string,
+          sprint_id: row.sprint_id as string,
+          session_number: row.session_number as number,
+          session_type: row.session_type as string,
+          status: row.status as string,
+          scheduled_at: (row.scheduled_at as string | null) || null,
+          class_id: (row.class_id as string | null) || null,
+          teacher_id: (row.teacher_id as string | null) || null,
+          completion_rating: (row.completion_rating as number | null) ?? null,
+          teacher_feedback: (row.teacher_feedback as string | null) || null,
+          feedback: (row.feedback as string | null) || null,
+          sprint_number: sprint?.sprint_number || 0,
+          enrollment_id: sprint?.enrollment?.id || null,
+          learner_id: sprint?.enrollment?.learner_id || null,
+          course_name: sprint?.enrollment?.course?.name || t("teacher.unknownCourseName"),
+        };
+      });
 
-      for (const session of sessionsData) {
-        const sData = session as any;
-        const students: SessionStudent[] = [];
-        let scheduleId: string | null = null;
+      const classIds = [...new Set(sessionRows.map((s) => s.class_id).filter(Boolean))] as string[];
+      let enrollments: FeedbackEnrollmentRow[] = [];
+      let schedules: FeedbackScheduleRow[] = [];
+      let attendance: FeedbackAttendanceRow[] = [];
+      let profiles: FeedbackProfileRow[] = [];
 
-        if (sData.class_id) {
-          // Get class_schedule
-          const { data: schedule } = await supabase
-            .from("class_schedules")
-            .select("id")
-            .eq("class_id", sData.class_id)
-            .maybeSingle();
+      if (classIds.length > 0) {
+        const [enrollRes, schedRes] = await Promise.all([
+          supabase.from("class_enrollments").select("class_id, student_id").in("class_id", classIds),
+          supabase.from("class_schedules").select("id, class_id, status").in("class_id", classIds),
+        ]);
+        if (enrollRes.error) throw enrollRes.error;
+        if (schedRes.error) throw schedRes.error;
+        enrollments = (enrollRes.data || []) as FeedbackEnrollmentRow[];
+        schedules = (schedRes.data || []) as FeedbackScheduleRow[];
 
-          scheduleId = schedule?.id || null;
-
-          if (schedule) {
-            // Get attendance with grades
-            const { data: attendance } = await supabase
-              .from("session_attendance")
-              .select("id, student_id, grade, teacher_feedback, status")
-              .eq("schedule_id", schedule.id);
-
-            if (attendance && attendance.length > 0) {
-              const studentIds = attendance.map((a: any) => a.student_id);
-
-              const { data: profiles } = await supabase
-                .from("profiles")
-                .select("id, full_name, email")
-                .in("id", studentIds);
-
-              const profileMap: Record<string, { name: string; email: string }> = {};
-              (profiles || []).forEach((p: any) => {
-                profileMap[p.id] = { name: p.full_name, email: p.email };
-              });
-
-              attendance.forEach((a: any) => {
-                students.push({
-                  studentId: a.student_id,
-                  studentName: profileMap[a.student_id]?.name || t("teacher.unknownName"),
-                  studentEmail: profileMap[a.student_id]?.email || "",
-                  grade: a.grade,
-                  feedback: a.teacher_feedback,
-                  attendanceId: a.id,
-                  attendanceStatus: a.status || null,
-                });
-              });
-            }
-
-            // CRITICAL: Also ensure the sprint session's own learner is included,
-            // even if they don't have a session_attendance record for this schedule.
-            const currentLearnerId = sData.sprint?.enrollment?.learner_id;
-            if (currentLearnerId && !students.some((st) => st.studentId === currentLearnerId)) {
-              const { data: learnerProfile } = await supabase
-                .from("profiles")
-                .select("full_name, email")
-                .eq("id", currentLearnerId)
-                .maybeSingle();
-
-              students.push({
-                studentId: currentLearnerId,
-                studentName: learnerProfile?.full_name || t("liveLesson.studentInfo"),
-                studentEmail: learnerProfile?.email || "",
-                grade: sData.completion_rating || null,
-                feedback: sData.teacher_feedback || null,
-                attendanceId: null,
-                attendanceStatus: null,
-              });
-            }
-          }
+        const scheduleIds = schedules.map((s) => s.id);
+        if (scheduleIds.length > 0) {
+          const attRes = await supabase
+            .from("session_attendance")
+            .select("id, schedule_id, student_id, grade, teacher_feedback, status")
+            .in("schedule_id", scheduleIds);
+          if (attRes.error) throw attRes.error;
+          attendance = (attRes.data || []) as FeedbackAttendanceRow[];
         }
-
-        // If no class_id, use sprint_session data
-        if (students.length === 0) {
-          const learnerId = sData.sprint?.enrollment?.learner_id;
-          if (learnerId) {
-            const { data: learnerProfile } = await supabase
-              .from("profiles")
-              .select("full_name, email")
-              .eq("id", learnerId)
-              .maybeSingle();
-
-            students.push({
-              studentId: learnerId,
-              studentName: learnerProfile?.full_name || t("liveLesson.studentInfo"),
-              studentEmail: learnerProfile?.email || "",
-              grade: sData.completion_rating || null,
-              feedback: sData.teacher_feedback || null,
-              attendanceId: null,
-              attendanceStatus: null,
-            });
-          }
-        }
-
-        result.push({
-          sessionId: sData.id,
-          sprintId: sData.sprint_id,
-          sprintNumber: sData.sprint?.sprint_number || 0,
-          sessionNumber: sData.session_number,
-          sessionType: sData.session_type,
-          status: sData.status,
-          scheduledAt: sData.scheduled_at,
-          courseName: sData.sprint?.enrollment?.course?.name || t("teacher.unknownCourseName"),
-          students,
-          classId: sData.class_id || null,
-          scheduleId: scheduleId || null,
-        });
       }
+
+      const profileIds = [
+        ...new Set([
+          ...sessionRows.map((s) => s.learner_id).filter(Boolean),
+          ...enrollments.map((e) => e.student_id),
+        ]),
+      ] as string[];
+      if (profileIds.length > 0) {
+        const profRes = await supabase.from("profiles").select("id, full_name, email").in("id", profileIds);
+        if (profRes.error) throw profRes.error;
+        profiles = (profRes.data || []) as FeedbackProfileRow[];
+      }
+
+      const cards = groupTeacherFeedbackCards({
+        sessions: sessionRows,
+        enrollments,
+        attendance,
+        schedules,
+        profiles,
+        fallbackName: t("teacher.unknownName"),
+      });
+
+      const result: PendingSession[] = cards.map((card) => ({
+        cardId: card.cardId,
+        sessionId: card.representativeSessionId || card.cardId,
+        sprintId: card.learners.find((l) => l.sprintId)?.sprintId || "",
+        sprintNumber: card.learners.find((l) => l.sprintNumber)?.sprintNumber || 0,
+        sessionNumber: card.sessionNumber,
+        sessionType: card.sessionType,
+        status: card.status,
+        scheduledAt: card.scheduledAt,
+        courseName: card.courseName,
+        classId: card.classId,
+        scheduleId: card.scheduleId,
+        scheduleAmbiguous: card.scheduleAmbiguous,
+        students: card.learners.map((learner) => ({
+          studentId: learner.studentId,
+          studentName: learner.studentName || t("teacher.unknownName"),
+          studentEmail: learner.studentEmail,
+          grade: learner.grade,
+          feedback: learner.feedback,
+          attendanceId: learner.attendanceId,
+          attendanceStatus: learner.attendanceStatus,
+          sessionId: learner.sessionId,
+          sprintId: learner.sprintId,
+          sprintNumber: learner.sprintNumber,
+          enrollmentId: learner.enrollmentId,
+          sessionStatus: learner.sessionStatus,
+          courseName: learner.courseName,
+          mutationBlockedReason: learner.mutationBlockedReason,
+        })),
+      }));
 
       setSessions(result);
 
-      // Initialize grade state
       const initial: Record<string, { grade: number; feedback: string }> = {};
       result.forEach((s) => {
         s.students.forEach((st) => {
-          const key = `${s.sessionId}_${st.studentId}`;
+          const key = feedbackDraftKey(st.sessionId, st.studentId);
           initial[key] = {
             grade: st.grade || 3,
             feedback: st.feedback || "",
@@ -383,7 +333,7 @@ export default function FeedbackTab() {
     } finally {
       setLoading(false);
     }
-  }, [profile?.id, supabase]);
+  }, [profile?.id, supabase, t]);
 
   useEffect(() => {
     fetchSessions();
@@ -398,7 +348,7 @@ export default function FeedbackTab() {
       if (isPendingTeacherFeedbackSession(a.status) && !isPendingTeacherFeedbackSession(b.status)) return -1;
       if (!isPendingTeacherFeedbackSession(a.status) && isPendingTeacherFeedbackSession(b.status)) return 1;
       // Then by sprint number desc
-      return b.sprintNumber - a.sprintNumber;
+      return (b.scheduledAt || "").localeCompare(a.scheduledAt || "");
     });
   }, [sessions]);
 
@@ -408,38 +358,43 @@ export default function FeedbackTab() {
     return true;
   });
 
-  const toggleExpand = (sessionId: string) => {
-    setExpandedId(expandedId === sessionId ? null : sessionId);
+  const toggleExpand = (cardId: string) => {
+    setExpandedId(expandedId === cardId ? null : cardId);
   };
 
-  const handleGradeChange = (sessionId: string, studentId: string, grade: number) => {
-    const key = `${sessionId}_${studentId}`;
+  const handleGradeChange = (learnerSessionId: string | null, studentId: string, grade: number) => {
+    const key = feedbackDraftKey(learnerSessionId, studentId);
     setStudentGrades((prev) => ({ ...prev, [key]: { ...prev[key], grade } }));
   };
 
-  const handleFeedbackChange = (sessionId: string, studentId: string, feedback: string) => {
-    const key = `${sessionId}_${studentId}`;
+  const handleFeedbackChange = (learnerSessionId: string | null, studentId: string, feedback: string) => {
+    const key = feedbackDraftKey(learnerSessionId, studentId);
     setStudentGrades((prev) => ({ ...prev, [key]: { ...prev[key], feedback } }));
   };
 
   const submitGrades = async (session: PendingSession) => {
-    setSavingId(session.sessionId);
+    if (session.scheduleAmbiguous) {
+      setErrorMsg(t("feedback.ambiguousSchedule"));
+      setTimeout(() => setErrorMsg(null), 4000);
+      return;
+    }
+    setSavingId(session.cardId);
     setErrorMsg(null);
 
     try {
       const { data: authData } = await supabase.auth.getSession();
       const teacherId = authData?.session?.user?.id;
+      const absSet = absentStudents[session.cardId] || new Set<string>();
 
       const grades = buildTeacherFeedbackSubmitGrades({
         sessionId: session.sessionId,
         learners: session.students.map((st) => ({
           studentId: st.studentId,
+          sessionId: st.sessionId,
           grade: st.grade,
           feedback: st.feedback,
           attendanceStatus:
-            st.attendanceStatus === "absent" || absentStudents[session.sessionId]?.has(st.studentId)
-              ? "absent"
-              : st.attendanceStatus,
+            st.attendanceStatus === "absent" || absSet.has(st.studentId) ? "absent" : st.attendanceStatus,
         })),
         drafts: studentGrades,
       });
@@ -453,19 +408,23 @@ export default function FeedbackTab() {
       });
 
       if (error) throw new Error(error.message);
+      if (result?.error) throw new Error(result.error);
 
+      const completed = !!result?.session_completed;
       setSessions((prev) =>
         prev.map((s) =>
-          s.sessionId === session.sessionId
+          s.cardId === session.cardId
             ? {
                 ...s,
-                status: result?.session_completed ? "completed" : s.status,
+                status: completed ? "completed" : s.status,
                 students: s.students.map((st) => {
-                  const key = `${s.sessionId}_${st.studentId}`;
+                  const key = feedbackDraftKey(st.sessionId, st.studentId);
+                  const abs = st.attendanceStatus === "absent" || (absentStudents[s.cardId] || new Set()).has(st.studentId);
                   return {
                     ...st,
-                    grade: studentGrades[key]?.grade || st.grade,
-                    feedback: studentGrades[key]?.feedback || st.feedback,
+                    grade: abs ? st.grade : studentGrades[key]?.grade || st.grade,
+                    feedback: abs ? st.feedback : studentGrades[key]?.feedback || st.feedback,
+                    sessionStatus: abs ? st.sessionStatus : completed && !abs ? "completed" : st.sessionStatus,
                   };
                 }),
               }
@@ -473,9 +432,10 @@ export default function FeedbackTab() {
         )
       );
 
-      setSaveSuccess(session.sessionId);
+      setSaveSuccess(session.cardId);
       setTimeout(() => setSaveSuccess(null), 3000);
-      setExpandedId(null);
+      if (completed) setExpandedId(null);
+      if (completed) await fetchSessions();
     } catch (err: any) {
       setErrorMsg(err?.message || t("feedback.submitError"));
       setTimeout(() => setErrorMsg(null), 4000);
@@ -487,6 +447,7 @@ export default function FeedbackTab() {
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return "-";
     return formatVietnamDateTime(dateStr, {
+      year: "numeric",
       month: "short",
       day: "numeric",
       hour: "2-digit",
@@ -656,13 +617,14 @@ export default function FeedbackTab() {
       ) : (
         <div className="space-y-4">
           {filteredSessions.map((session) => {
-            const isExpanded = expandedId === session.sessionId;
+            const isExpanded = expandedId === session.cardId;
             const isPending = isPendingTeacherFeedbackSession(session.status);
-            const isSaving = savingId === session.sessionId;
-            const justSaved = saveSuccess === session.sessionId;
-            const absSet = absentStudents[session.sessionId] || new Set<string>();
+            const isSaving = savingId === session.cardId;
+            const justSaved = saveSuccess === session.cardId;
+            const absSet = absentStudents[session.cardId] || new Set<string>();
             const learnersForAction = session.students.map((s) => ({
               studentId: s.studentId,
+              sessionId: s.sessionId,
               grade: s.grade,
               feedback: s.feedback,
               attendanceStatus: s.attendanceStatus === "absent" || absSet.has(s.studentId) ? "absent" : s.attendanceStatus,
@@ -680,7 +642,7 @@ export default function FeedbackTab() {
 
             return (
               <div
-                key={session.sessionId}
+                key={session.cardId}
                 className={`rounded-xl border transition-all duration-200 ${
                   justSaved
                     ? "border-accent-300 bg-accent-50/50"
@@ -690,7 +652,7 @@ export default function FeedbackTab() {
                 }`}
               >
                 <div
-                  onClick={() => toggleExpand(session.sessionId)}
+                  onClick={() => toggleExpand(session.cardId)}
                   className="flex items-start gap-4 p-5 cursor-pointer group"
                 >
                   <div className="w-10 h-10 flex items-center justify-center rounded-full bg-primary-100 text-primary-700 font-semibold text-sm shrink-0">
@@ -700,7 +662,11 @@ export default function FeedbackTab() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="text-sm font-semibold text-foreground-900">
-                        {t("feedback.sprintSessionLabel", { sprint: session.sprintNumber, session: session.sessionNumber })}
+                        {t("feedback.cardHeader", {
+                          session: session.sessionNumber,
+                          type: getSessionTypeLabel(session.sessionType),
+                          when: formatDate(session.scheduledAt),
+                        })}
                       </span>
                       {isPending && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-secondary-500 text-background-50 whitespace-nowrap animate-pulse">
@@ -725,7 +691,7 @@ export default function FeedbackTab() {
                     {session.students.length > 0 && (
                       <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                         {session.students.map((st) => {
-                          const isAbsent = st.attendanceStatus === "absent" || absentStudents[session.sessionId]?.has(st.studentId);
+                          const isAbsent = st.attendanceStatus === "absent" || absSet.has(st.studentId);
                           return (
                           <span
                             key={st.studentId}
@@ -779,13 +745,22 @@ export default function FeedbackTab() {
                 {isExpanded && (
                   <div className="px-5 pb-5 border-t border-background-100">
                     <div className="mt-4 space-y-4">
+                      {session.scheduleAmbiguous && (
+                        <p className="text-xs text-accent-700 flex items-center gap-1.5">
+                          <i className="ri-error-warning-line"></i>
+                          {t("feedback.ambiguousSchedule")}
+                        </p>
+                      )}
                       {session.students.map((student) => {
-                        const key = `${session.sessionId}_${student.studentId}`;
+                        const key = feedbackDraftKey(student.sessionId, student.studentId);
                         const grade = studentGrades[key];
                         const isAbsent = student.attendanceStatus === "absent" || absSet.has(student.studentId);
                         const isGraded = student.grade !== null && !isAbsent;
-                        const isMarkingThis = markingAbsent === key;
                         const justMarkedAbsent = absentSuccess === key;
+                        const canMutate = canMutateLearnerOnCard({
+                          scheduleAmbiguous: session.scheduleAmbiguous,
+                          learner: student,
+                        });
 
                         return (
                           <div
@@ -803,10 +778,13 @@ export default function FeedbackTab() {
                             <div className="flex items-center justify-between mb-3">
                               <div className="flex items-center gap-2">
                                 <div className="w-8 h-8 flex items-center justify-center rounded-full bg-primary-100 text-primary-600 text-xs font-bold">
-                                  {student.studentName.charAt(0).toUpperCase()}
+                                  {(student.studentName || "?").charAt(0).toUpperCase()}
                                 </div>
                                 <div>
                                   <p className="text-sm font-semibold text-foreground-900">{student.studentName}</p>
+                                  {student.sprintNumber != null && (
+                                    <p className="text-xs text-foreground-500">{t("feedback.learnerSprintLabel", { sprint: student.sprintNumber })}</p>
+                                  )}
                                   <p className="text-xs text-foreground-400">{student.studentEmail}</p>
                                 </div>
                               </div>
@@ -838,7 +816,16 @@ export default function FeedbackTab() {
                               )}
                             </div>
 
-                            {isAbsent ? (
+                            {!canMutate && !isAbsent && !isGraded ? (
+                              <div className="mt-2 p-3 rounded bg-background-50 border border-background-100">
+                                <p className="text-xs text-accent-700 flex items-center gap-1.5">
+                                  <i className="ri-error-warning-line"></i>
+                                  {student.mutationBlockedReason === "ambiguous_schedule" || session.scheduleAmbiguous
+                                    ? t("feedback.ambiguousSchedule")
+                                    : t("feedback.unlinkedLearner")}
+                                </p>
+                              </div>
+                            ) : isAbsent ? (
                               <div className="mt-2 p-3 rounded bg-background-50 border border-background-100">
                                 <p className="text-xs text-foreground-500 flex items-center gap-1.5">
                                   <i className="ri-information-line"></i>
@@ -858,7 +845,7 @@ export default function FeedbackTab() {
                                       <button
                                         key={n}
                                         type="button"
-                                        onClick={() => handleGradeChange(session.sessionId, student.studentId, n)}
+                                        onClick={() => handleGradeChange(student.sessionId, student.studentId, n)}
                                         className={`w-7 h-7 flex items-center justify-center rounded-full text-[11px] font-bold transition-all duration-150 cursor-pointer border-2 ${
                                           (grade?.grade || 3) >= n
                                             ? `${ratingColors[n - 1]} border-transparent text-white`
@@ -879,7 +866,7 @@ export default function FeedbackTab() {
                                   </label>
                                   <textarea
                                     value={grade?.feedback || ""}
-                                    onChange={(e) => handleFeedbackChange(session.sessionId, student.studentId, e.target.value)}
+                                    onChange={(e) => handleFeedbackChange(student.sessionId, student.studentId, e.target.value)}
                                     rows={3}
                                     maxLength={500}
                                     className="w-full px-3 py-2 rounded-md border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:border-primary-300 transition-colors resize-y"
@@ -904,7 +891,8 @@ export default function FeedbackTab() {
                             {session.students.map((st) => {
                               const alreadyAbsent = st.attendanceStatus === "absent" || absSet.has(st.studentId);
                               if (alreadyAbsent || st.grade !== null) return null;
-                              const mKey = `${session.sessionId}_${st.studentId}`;
+                              if (!canMutateLearnerOnCard({ scheduleAmbiguous: session.scheduleAmbiguous, learner: st })) return null;
+                              const mKey = feedbackDraftKey(st.sessionId, st.studentId);
                               return (
                                 <button
                                   key={st.studentId}
@@ -938,10 +926,11 @@ export default function FeedbackTab() {
                           <button
                             type="button"
                             onClick={() => submitGrades(session)}
-                            disabled={isSaving || !session.students.every((st) => {
+                            disabled={isSaving || session.scheduleAmbiguous || !session.students.every((st) => {
                               const alreadyAbsent = st.attendanceStatus === "absent" || absSet.has(st.studentId);
                               if (alreadyAbsent || st.grade !== null) return true;
-                              const k = `${session.sessionId}_${st.studentId}`;
+                              if (!canMutateLearnerOnCard({ scheduleAmbiguous: session.scheduleAmbiguous, learner: st })) return false;
+                              const k = feedbackDraftKey(st.sessionId, st.studentId);
                               const g = studentGrades[k];
                               return g && g.feedback.trim().length > 0;
                             })}
@@ -979,7 +968,7 @@ export default function FeedbackTab() {
                           <button
                             type="button"
                             onClick={() => submitGrades(session)}
-                            disabled={isSaving}
+                            disabled={isSaving || session.scheduleAmbiguous}
                             className="inline-flex items-center gap-1.5 px-5 py-2 rounded-md text-xs font-semibold bg-primary-500 text-background-50 hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 whitespace-nowrap cursor-pointer"
                           >
                             {isSaving ? (
@@ -1024,7 +1013,7 @@ export default function FeedbackTab() {
               {t("feedback.markAbsentConfirmTitle")}
             </h4>
             <p className="text-sm text-foreground-500 text-center mb-6">
-              {t("feedback.markAbsentConfirmMessage")}
+              {t("feedback.markAbsentConfirmMessageNamed", { name: absentConfirm.student.studentName })}
             </p>
             {errorMsg && (
               <p className="text-sm text-accent-700 text-center mb-4 flex items-center justify-center gap-1.5">

@@ -8,6 +8,11 @@ import {
   resolveReplyTo,
   shouldSendAbsenceRecordedEmail,
 } from "../_shared/email.ts";
+import {
+  canCallerMarkClassAttendance,
+  evaluateMarkAbsentOwnership,
+  planMarkAbsentWrites,
+} from "../_shared/classAttendancePolicy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -29,6 +34,32 @@ serve(async (req: Request) => {
     const { action, student_id, session_id, schedule_id, class_id, session_number, sprint_id, sprint_number, enrollment_id, course_name, learner_name, attendance_id } = body;
 
     if (action === "reopen_absent") {
+      const authHeader = req.headers.get("Authorization")?.replace("Bearer ", "");
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { data: { user: caller }, error: authError } = await supabaseClient.auth.getUser(authHeader);
+      if (authError || !caller) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { data: callerProfile } = await supabaseClient
+        .from("profiles")
+        .select("role")
+        .eq("id", caller.id)
+        .maybeSingle();
+      if (callerProfile?.role !== "admin") {
+        return new Response(JSON.stringify({ error: "Admin only" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       if (!attendance_id) {
         return new Response(
           JSON.stringify({ error: "Missing attendance_id" }),
@@ -183,181 +214,345 @@ serve(async (req: Request) => {
     }
 
     if (action === "mark_absent") {
-      if (!student_id || !schedule_id) {
+      if (!student_id || !schedule_id || !session_id) {
         return new Response(
-          JSON.stringify({ error: "Missing student_id or schedule_id" }),
+          JSON.stringify({ error: "Missing student_id, session_id, or schedule_id" }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      // Idempotent: only count/notify/email on first not-absent → absent transition
-      const { data: existingAttendance } = await supabaseClient
+      const authHeader = req.headers.get("Authorization")?.replace("Bearer ", "");
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { data: { user: caller }, error: authError } = await supabaseClient.auth.getUser(authHeader);
+      if (authError || !caller) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { data: callerProfile } = await supabaseClient
+        .from("profiles")
+        .select("role")
+        .eq("id", caller.id)
+        .maybeSingle();
+
+      const { data: sprintSession, error: sessionLoadErr } = await supabaseClient
+        .from("sprint_sessions")
+        .select("id, class_id, teacher_id, status, sprint_id")
+        .eq("id", session_id)
+        .maybeSingle();
+
+      if (sessionLoadErr || !sprintSession) {
+        return new Response(
+          JSON.stringify({ error: "Session not found" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const { data: sprintRow } = await supabaseClient
+        .from("learning_sprints")
+        .select("id, enrollment_id")
+        .eq("id", sprintSession.sprint_id)
+        .maybeSingle();
+
+      let enrollmentLearnerId: string | null = null;
+      if (sprintRow?.enrollment_id) {
+        const { data: enrollRow } = await supabaseClient
+          .from("enrollments")
+          .select("learner_id")
+          .eq("id", sprintRow.enrollment_id)
+          .maybeSingle();
+        enrollmentLearnerId = enrollRow?.learner_id || null;
+      }
+
+      let classTeacherId: string | null = null;
+      let scheduleCountForClass = 0;
+      let scheduleClassId: string | null = null;
+      const resolvedClassId = sprintSession.class_id || class_id || null;
+
+      if (resolvedClassId) {
+        const { data: classRow } = await supabaseClient
+          .from("classes")
+          .select("teacher_id")
+          .eq("id", resolvedClassId)
+          .maybeSingle();
+        classTeacherId = classRow?.teacher_id || null;
+
+        const { data: classSchedules, error: schedErr } = await supabaseClient
+          .from("class_schedules")
+          .select("id, class_id")
+          .eq("class_id", resolvedClassId);
+        if (schedErr) {
+          return new Response(
+            JSON.stringify({ error: "Failed to load class schedules", detail: schedErr.message }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        scheduleCountForClass = classSchedules?.length || 0;
+      }
+
+      if (schedule_id) {
+        const { data: scheduleRow } = await supabaseClient
+          .from("class_schedules")
+          .select("id, class_id")
+          .eq("id", schedule_id)
+          .maybeSingle();
+        scheduleClassId = scheduleRow?.class_id || null;
+      }
+
+      if (
+        !canCallerMarkClassAttendance({
+          callerId: caller.id,
+          callerRole: callerProfile?.role || null,
+          sessionTeacherId: sprintSession.teacher_id,
+          classTeacherId,
+        })
+      ) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const ownership = evaluateMarkAbsentOwnership({
+        studentId: student_id,
+        sessionId: session_id,
+        classId: class_id || resolvedClassId,
+        scheduleId: schedule_id,
+        session: sprintSession,
+        enrollmentLearnerId,
+        scheduleClassId,
+        scheduleCountForClass,
+      });
+
+      if (!ownership.ok) {
+        return new Response(
+          JSON.stringify({ error: "Attendance target mismatch", reason: ownership.reason }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const { data: existingAttendance, error: existingAttErr } = await supabaseClient
         .from("session_attendance")
         .select("id, status")
         .eq("schedule_id", schedule_id)
         .eq("student_id", student_id)
         .maybeSingle();
 
-      let alreadyAbsent = existingAttendance?.status === "absent";
-
-      if (!alreadyAbsent && session_id) {
-        const { data: sprintSession } = await supabaseClient
-          .from("sprint_sessions")
-          .select("id, status")
-          .eq("id", session_id)
-          .maybeSingle();
-        if (sprintSession?.status === "absent") alreadyAbsent = true;
+      if (existingAttErr) {
+        return new Response(
+          JSON.stringify({ error: "Failed to load attendance", detail: existingAttErr.message }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
 
-      if (!alreadyAbsent && session_id) {
-        const { data: existingIssue } = await supabaseClient
-          .from("learner_attendance")
-          .select("id")
-          .eq("type", "absent_session")
-          .eq("related_session_id", session_id)
-          .eq("learner_id", student_id)
-          .maybeSingle();
-        if (existingIssue) alreadyAbsent = true;
+      const { data: existingIssue, error: existingIssueErr } = await supabaseClient
+        .from("learner_attendance")
+        .select("id, resolved")
+        .eq("type", "absent_session")
+        .eq("related_session_id", session_id)
+        .eq("learner_id", student_id)
+        .maybeSingle();
+
+      if (existingIssueErr) {
+        return new Response(
+          JSON.stringify({ error: "Failed to load learner attendance", detail: existingIssueErr.message }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
 
-      if (alreadyAbsent) {
+      const writePlan = planMarkAbsentWrites({
+        attendanceStatus: existingAttendance?.status || null,
+        sessionStatus: sprintSession.status,
+        learnerAttendance: existingIssue
+          ? { id: existingIssue.id, resolved: existingIssue.resolved === true }
+          : null,
+      });
+
+      if (writePlan.alreadyComplete || writePlan.preserveResolved) {
         return new Response(
           JSON.stringify({ success: true, marked_absent: true, already_absent: true }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      if (existingAttendance) {
-        await supabaseClient
-          .from("session_attendance")
-          .update({
-            status: "absent",
-            grade: null,
-            teacher_feedback: null,
-            note: "Giáo viên đánh dấu vắng học",
-            marked_at: new Date().toISOString(),
-          })
-          .eq("id", existingAttendance.id);
-      } else {
-        await supabaseClient
-          .from("session_attendance")
-          .insert({
-            schedule_id: schedule_id,
-            student_id: student_id,
-            class_id: class_id || null,
-            status: "absent",
-            grade: null,
-            teacher_feedback: null,
-            note: "Giáo viên đánh dấu vắng học",
-            marked_at: new Date().toISOString(),
-          });
+      if (writePlan.writeAttendance) {
+        if (existingAttendance) {
+          const { error: updAttErr } = await supabaseClient
+            .from("session_attendance")
+            .update({
+              status: "absent",
+              grade: null,
+              teacher_feedback: null,
+              note: "Giáo viên đánh dấu vắng học",
+              marked_at: new Date().toISOString(),
+            })
+            .eq("id", existingAttendance.id)
+            .eq("student_id", student_id);
+          if (updAttErr) {
+            return new Response(
+              JSON.stringify({ error: "Failed to update attendance", detail: updAttErr.message }),
+              { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        } else {
+          const { error: insAttErr } = await supabaseClient
+            .from("session_attendance")
+            .insert({
+              schedule_id: schedule_id,
+              student_id: student_id,
+              class_id: resolvedClassId,
+              status: "absent",
+              grade: null,
+              teacher_feedback: null,
+              note: "Giáo viên đánh dấu vắng học",
+              marked_at: new Date().toISOString(),
+            });
+          if (insAttErr) {
+            return new Response(
+              JSON.stringify({ error: "Failed to insert attendance", detail: insAttErr.message }),
+              { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        }
       }
 
-      if (session_id) {
-        await supabaseClient
+      if (writePlan.writeSession) {
+        const { error: sessionUpdErr } = await supabaseClient
           .from("sprint_sessions")
           .update({
             status: "absent",
             completion_rating: null,
             feedback: "Học viên vắng học",
           })
-          .eq("id", session_id);
+          .eq("id", sprintSession.id);
+        if (sessionUpdErr) {
+          return new Response(
+            JSON.stringify({ error: "Failed to update sprint session", detail: sessionUpdErr.message }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
       }
 
-      const { data: insertedAtt, error: attErr } = await supabaseClient
-        .from("learner_attendance")
-        .insert({
-          learner_id: student_id,
-          enrollment_id: enrollment_id || null,
-          related_session_id: session_id || null,
-          related_sprint_id: sprint_id || null,
-          related_class_schedule_id: schedule_id,
-          class_id: class_id || null,
-          session_number: session_number || null,
-          sprint_number: sprint_number || null,
-          type: "absent_session",
-          date: new Date().toISOString().split("T")[0],
-          learner_name: learner_name || "",
-          course_name: course_name || "",
-          note: "Giáo viên đánh dấu vắng học",
-          resolved: false,
+      let learnerAttendanceId = existingIssue?.id || null;
+      if (writePlan.insertLearnerAttendance) {
+        const { data: insertedAtt, error: attErr } = await supabaseClient
+          .from("learner_attendance")
+          .insert({
+            learner_id: student_id,
+            enrollment_id: sprintRow?.enrollment_id || enrollment_id || null,
+            related_session_id: sprintSession.id,
+            related_sprint_id: sprintSession.sprint_id,
+            related_class_schedule_id: schedule_id,
+            class_id: resolvedClassId,
+            session_number: session_number || null,
+            sprint_number: sprint_number || null,
+            type: "absent_session",
+            date: new Date().toISOString().split("T")[0],
+            learner_name: learner_name || "",
+            course_name: course_name || "",
+            note: "Giáo viên đánh dấu vắng học",
+            resolved: false,
+            created_at: new Date().toISOString(),
+          })
+          .select("id")
+          .single();
+
+        if (attErr || !insertedAtt?.id) {
+          console.error("Failed to insert learner_attendance:", attErr);
+          return new Response(
+            JSON.stringify({ error: "Failed to record learner attendance", detail: attErr?.message }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        learnerAttendanceId = insertedAtt.id;
+      }
+
+      let absenceCount = 0;
+      if (writePlan.sendAbsenceNotice) {
+        if (!learnerAttendanceId) {
+          return new Response(
+            JSON.stringify({ error: "Failed to record learner attendance" }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // Cumulative absence count for this learner+course (never reset by resolve/reopen/FC)
+        const { data: absenceRows } = await supabaseClient
+          .from("learner_attendance")
+          .select("id, learner_id, enrollment_id, course_name, type")
+          .eq("learner_id", student_id)
+          .eq("type", "absent_session");
+
+        absenceCount = countAuthoritativeAbsences(absenceRows || [], {
+          learnerId: student_id,
+          enrollmentId: sprintRow?.enrollment_id || enrollment_id || null,
+          courseName: course_name || null,
+        });
+        if (absenceCount < 1) absenceCount = 1;
+
+        const notice = buildAbsenceInAppNotification({
+          sprintNumber: sprint_number,
+          sessionNumber: session_number,
+          courseName: course_name,
+          absenceCount,
+          absenceLimit: ABSENCE_LIMIT,
+        });
+
+        await supabaseClient.from("notifications").insert({
+          user_id: student_id,
+          title: notice.title,
+          message: notice.message,
+          type: "system",
+          is_read: false,
           created_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single();
+          action_url: "/dashboard",
+        });
 
-      if (attErr) {
-        console.error("Failed to insert learner_attendance:", attErr);
-      }
-
-      const learnerAttendanceId = insertedAtt?.id || null;
-
-      // Cumulative absence count for this learner+course (never reset by resolve/reopen/FC)
-      const { data: absenceRows } = await supabaseClient
-        .from("learner_attendance")
-        .select("id, learner_id, enrollment_id, course_name, type")
-        .eq("learner_id", student_id)
-        .eq("type", "absent_session");
-
-      let absenceCount = countAuthoritativeAbsences(absenceRows || [], {
-        learnerId: student_id,
-        enrollmentId: enrollment_id || null,
-        courseName: course_name || null,
-      });
-      if (absenceCount < 1) absenceCount = 1;
-
-      const notice = buildAbsenceInAppNotification({
-        sprintNumber: sprint_number,
-        sessionNumber: session_number,
-        courseName: course_name,
-        absenceCount,
-        absenceLimit: ABSENCE_LIMIT,
-      });
-
-      await supabaseClient.from("notifications").insert({
-        user_id: student_id,
-        title: notice.title,
-        message: notice.message,
-        type: "system",
-        is_read: false,
-        created_at: new Date().toISOString(),
-        action_url: "/dashboard",
-      });
-
-      if (
-        shouldSendAbsenceRecordedEmail({
-          action: "mark_absent",
-          alreadyAbsent: false,
-          learnerAttendanceId,
-        })
-      ) {
-        try {
-          await notifyAbsenceRecordedAfterSuccess({
-            supabase: supabaseClient,
-            resendApiKey: Deno.env.get("RESEND_API_KEY") ?? "",
-            replyTo: resolveReplyTo({ envValue: Deno.env.get("EMAIL_REPLY_TO") }),
-            learnerAttendanceId: learnerAttendanceId!,
-            learnerId: student_id,
-            scheduleId: schedule_id,
-            sessionNumber: session_number,
-            sprintNumber: sprint_number,
-            courseName: course_name || null,
-            absenceCount,
-            absenceLimit: ABSENCE_LIMIT,
-            learnerNameHint: learner_name || null,
-          });
-        } catch (emailErr) {
-          console.error("Absence email failed (non-fatal):", emailErr);
+        if (
+          shouldSendAbsenceRecordedEmail({
+            action: "mark_absent",
+            alreadyAbsent: false,
+            learnerAttendanceId,
+          })
+        ) {
+          try {
+            await notifyAbsenceRecordedAfterSuccess({
+              supabase: supabaseClient,
+              resendApiKey: Deno.env.get("RESEND_API_KEY") ?? "",
+              replyTo: resolveReplyTo({ envValue: Deno.env.get("EMAIL_REPLY_TO") }),
+              learnerAttendanceId,
+              learnerId: student_id,
+              scheduleId: schedule_id,
+              sessionNumber: session_number,
+              sprintNumber: sprint_number,
+              courseName: course_name || null,
+              absenceCount,
+              absenceLimit: ABSENCE_LIMIT,
+              learnerNameHint: learner_name || null,
+            });
+          } catch (emailErr) {
+            console.error("Absence email failed (non-fatal):", emailErr);
+          }
         }
       }
 
       return new Response(
-        JSON.stringify({
-          success: true,
-          marked_absent: true,
-          absence_count: absenceCount,
-          absence_limit: ABSENCE_LIMIT,
-        }),
+        JSON.stringify(
+          writePlan.sendAbsenceNotice
+            ? {
+                success: true,
+                marked_absent: true,
+                absence_count: absenceCount,
+                absence_limit: ABSENCE_LIMIT,
+              }
+            : { success: true, marked_absent: true }
+        ),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
