@@ -1,8 +1,15 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { getSupabase } from "@/lib/supabase";
 import ClassModal from "./ClassModal";
 import ClassStudentsPanel from "./ClassStudentsPanel";
+import {
+  adminClassRelatedReadFailed,
+  classHasScheduleInWeek,
+  decideClassesPrimaryRead,
+  isLatestAdminClassesRequest,
+  summarizeAdminClassesWeek,
+} from "@/lib/adminClassesView";
 import {
   calendarDateToLocalDate,
   formatVietnamDateShortVi,
@@ -61,12 +68,15 @@ export default function AdminClasses() {
   const [studentsPanelOpen, setStudentsPanelOpen] = useState(false);
   const [studentsPanelClass, setStudentsPanelClass] = useState<ClassData | null>(null);
 
+  const classesRequestRef = useRef(0);
+
   const showToast = (type: "success" | "error", message: string) => {
     setToast({ type, message });
     setTimeout(() => setToast(null), 3500);
   };
 
   const fetchClasses = useCallback(async () => {
+    const requestId = ++classesRequestRef.current;
     setLoading(true);
     setError("");
 
@@ -86,12 +96,20 @@ export default function AdminClasses() {
         supabase.from("class_enrollments").select("class_id, student_id"),
       ]);
 
-      if (classesRes.error || !classesRes.data || classesRes.data.length === 0) {
+      if (!isLatestAdminClassesRequest(requestId, classesRequestRef.current)) return;
+
+      const classRows = classesRes.data || [];
+      const primary = decideClassesPrimaryRead(classesRes.error, classRows.length);
+      if (primary === "error") {
+        setError(t("auth.adminClassError"));
+        return;
+      }
+      if (primary === "empty") {
         setClasses([]);
         return;
       }
 
-      const classIds = classesRes.data.map((c: any) => c.id);
+      const classIds = classRows.map((c: any) => c.id);
 
       const courseMap = new Map<string, string>();
       (coursesRes.data || []).forEach((c) => courseMap.set(c.id, c.name));
@@ -109,6 +127,13 @@ export default function AdminClasses() {
         supabase.from("class_schedules").select("class_id, date, start_time, end_time").in("class_id", classIds).order("date").order("start_time"),
         supabase.from("sprint_sessions").select("class_id, status").in("class_id", classIds),
       ]);
+
+      if (!isLatestAdminClassesRequest(requestId, classesRequestRef.current)) return;
+
+      if (adminClassRelatedReadFailed([schedulesRes.error, sessionsRes.error])) {
+        setError(t("auth.adminClassError"));
+        return;
+      }
 
       // Build schedule map: class_id → [{ date, start_time, end_time }]
       const scheduleMap = new Map<string, { date: string; start_time: string; end_time: string }[]>();
@@ -130,7 +155,7 @@ export default function AdminClasses() {
         else if (s.status === "locked") stats.locked++;
       });
 
-      const merged: ClassData[] = classesRes.data.map((c: any) => {
+      const merged: ClassData[] = classRows.map((c: any) => {
         const courseInfo = c.course_id ? courseMap.get(c.course_id) : null;
         const teacherInfo = c.teacher_id ? teacherMap.get(c.teacher_id) : null;
         const classSchedules = scheduleMap.get(c.id) || [];
@@ -144,14 +169,11 @@ export default function AdminClasses() {
           }).join(", ");
         }
 
-        // Check if class has any schedule in current week
-        let isCurrentWeek = false;
-        for (const s of classSchedules) {
-          if (s.date >= weekMondayStr && s.date <= weekSundayStr) {
-            isCurrentWeek = true;
-            break;
-          }
-        }
+        const isCurrentWeek = classHasScheduleInWeek(
+          classSchedules.map((s) => s.date),
+          weekMondayStr,
+          weekSundayStr
+        );
 
         return {
           id: c.id,
@@ -181,14 +203,18 @@ export default function AdminClasses() {
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       });
 
+      if (!isLatestAdminClassesRequest(requestId, classesRequestRef.current)) return;
       setClasses(merged);
     } catch (err) {
       console.error("Failed to fetch classes:", err);
-      setClasses([]);
+      if (!isLatestAdminClassesRequest(requestId, classesRequestRef.current)) return;
+      setError(t("auth.adminClassError"));
     } finally {
-      setLoading(false);
+      if (isLatestAdminClassesRequest(requestId, classesRequestRef.current)) {
+        setLoading(false);
+      }
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     fetchClasses();
@@ -243,13 +269,7 @@ export default function AdminClasses() {
     return matchSearch;
   });
 
-  const activeCount = currentWeekClasses.filter((c) => {
-    const isFullyCompleted =
-      c.session_stats.total > 0 &&
-      c.session_stats.completed === c.session_stats.total;
-    return !isFullyCompleted;
-  }).length;
-  const totalStudents = currentWeekClasses.reduce((sum, c) => sum + c.student_count, 0);
+  const weekStats = summarizeAdminClassesWeek(classes);
 
   return (
     <div>
@@ -270,21 +290,23 @@ export default function AdminClasses() {
         </button>
       </div>
 
-      {/* Stats Row */}
+      {/* Stats Row — hidden when the load failed so zeros are not shown as real counts */}
+      {!error && (
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="p-4 rounded-xl bg-background-50 border border-background-200">
           <p className="text-xs text-foreground-400 mb-1">{t("auth.adminActiveClasses")}</p>
-          <p className="font-heading text-2xl font-bold text-accent-600">{activeCount}</p>
+          <p className="font-heading text-2xl font-bold text-accent-600">{weekStats.active}</p>
         </div>
         <div className="p-4 rounded-xl bg-background-50 border border-background-200">
           <p className="text-xs text-foreground-400 mb-1">{t("auth.adminThisWeekClasses")}</p>
-          <p className="font-heading text-2xl font-bold text-foreground-950">{currentWeekClasses.length}</p>
+          <p className="font-heading text-2xl font-bold text-foreground-950">{weekStats.thisWeek}</p>
         </div>
         <div className="p-4 rounded-xl bg-background-50 border border-background-200">
           <p className="text-xs text-foreground-400 mb-1">{t("auth.adminStudents")}</p>
-          <p className="font-heading text-2xl font-bold text-primary-600">{totalStudents}</p>
+          <p className="font-heading text-2xl font-bold text-primary-600">{weekStats.students}</p>
         </div>
       </div>
+      )}
 
       {/* Search */}
       <div className="mb-6">
@@ -320,7 +342,7 @@ export default function AdminClasses() {
           <div className="w-8 h-8 mx-auto border-2 border-primary-500/30 border-t-primary-500 rounded-full animate-spin"></div>
           <p className="mt-4 text-sm text-foreground-400">Loading classes...</p>
         </div>
-      ) : filtered.length === 0 ? (
+      ) : error ? null : filtered.length === 0 ? (
         <div className="text-center py-16">
           <div className="w-16 h-16 mx-auto flex items-center justify-center rounded-2xl bg-background-100 text-foreground-400 mb-4">
             <i className="ri-building-line text-2xl"></i>
@@ -492,9 +514,11 @@ export default function AdminClasses() {
         </div>
       )}
 
+      {!error && (
       <p className="mt-4 text-xs text-foreground-400">
-        {filtered.length} / {currentWeekClasses.length} {t("auth.adminClasses").toLowerCase()} – {t("auth.adminThisWeek")}
+        {filtered.length} / {weekStats.thisWeek} {t("auth.adminClasses").toLowerCase()} – {t("auth.adminThisWeek")}
       </p>
+      )}
 
       <ClassModal
         open={modalOpen}
