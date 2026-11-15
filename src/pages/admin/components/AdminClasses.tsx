@@ -4,19 +4,19 @@ import { getSupabase } from "@/lib/supabase";
 import ClassModal from "./ClassModal";
 import ClassStudentsPanel from "./ClassStudentsPanel";
 import {
+  adminWeekRangeYmd,
   classHasScheduleInWeek,
+  classIdsInSelectedWeek,
   decideClassesPrimaryRead,
+  DEFAULT_ADMIN_WEEK_OFFSET,
+  fetchAllPages,
   fetchChunkedClassRows,
+  filterAdminClassesBySearch,
   isLatestAdminClassesRequest,
   summarizeAdminClassesWeek,
+  type AdminWeekOffset,
 } from "@/lib/adminClassesView";
-import {
-  calendarDateToLocalDate,
-  formatVietnamDateShortVi,
-  getMondayOfWeek,
-  toLocalDateStr,
-  vietnamTodayStr,
-} from "@/lib/datetime";
+import { formatVietnamDateShortVi } from "@/lib/datetime";
 
 interface ClassData {
   id: string;
@@ -55,6 +55,7 @@ function formatTimeShort(time: string): string {
 export default function AdminClasses() {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
+  const [weekOffset, setWeekOffset] = useState<AdminWeekOffset>(DEFAULT_ADMIN_WEEK_OFFSET);
   const [classes, setClasses] = useState<ClassData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -83,48 +84,49 @@ export default function AdminClasses() {
     try {
       const supabase = getSupabase();
 
-      const weekMonday = getMondayOfWeek(calendarDateToLocalDate(vietnamTodayStr()));
-      const weekSunday = new Date(weekMonday);
-      weekSunday.setDate(weekMonday.getDate() + 6);
-      const weekMondayStr = toLocalDateStr(weekMonday);
-      const weekSundayStr = toLocalDateStr(weekSunday);
-
-      const [classesRes, coursesRes, teachersRes, enrollRes] = await Promise.all([
-        supabase.from("classes").select("*").order("created_at", { ascending: false }),
+      const week = adminWeekRangeYmd(weekOffset);
+      const [coursesRes, teachersRes, weekScheduleRows] = await Promise.all([
         supabase.from("courses").select("id, name"),
         supabase.from("profiles").select("id, full_name, role").in("role", ["vietnamese_teacher", "foreign_teacher"]),
-        supabase.from("class_enrollments").select("class_id, student_id"),
+        fetchAllPages((from, to) =>
+          supabase
+            .from("class_schedules")
+            .select("class_id, date")
+            .gte("date", week.start)
+            .lte("date", week.end)
+            .order("date")
+            .order("start_time")
+            .order("id")
+            .range(from, to)
+        ),
       ]);
 
       if (!isLatestAdminClassesRequest(requestId, classesRequestRef.current)) return;
 
-      const classRows = classesRes.data || [];
-      const primary = decideClassesPrimaryRead(classesRes.error, classRows.length);
-      if (primary === "error") {
-        setError(t("auth.adminClassError"));
-        return;
-      }
-      if (primary === "empty") {
+      const classIds = classIdsInSelectedWeek(weekScheduleRows, week.start, week.end);
+      if (classIds.length === 0) {
         setClasses([]);
         return;
       }
 
-      const classIds = classRows.map((c: any) => c.id);
-
-      const courseMap = new Map<string, string>();
-      (coursesRes.data || []).forEach((c) => courseMap.set(c.id, c.name));
-
-      const teacherMap = new Map<string, { full_name: string; role: string }>();
-      (teachersRes.data || []).forEach((t) => teacherMap.set(t.id, { full_name: t.full_name, role: t.role }));
-
-      const studentCounts = new Map<string, number>();
-      (enrollRes.data || []).forEach((en) => {
-        studentCounts.set(en.class_id, (studentCounts.get(en.class_id) || 0) + 1);
-      });
-
-      // Chunk `.in(class_id)` so the GET URL stays valid, and page each chunk
-      // so the 1000-row response cap cannot drop sprint_sessions.
-      const [scheduleRows, sessionRows] = await Promise.all([
+      const [classRows, enrollRows, scheduleRows, sessionRows] = await Promise.all([
+        fetchChunkedClassRows(classIds, (chunk, from, to) =>
+          supabase
+            .from("classes")
+            .select("*")
+            .in("id", [...chunk])
+            .order("id")
+            .range(from, to)
+        ),
+        fetchChunkedClassRows(classIds, (chunk, from, to) =>
+          supabase
+            .from("class_enrollments")
+            .select("class_id, student_id")
+            .in("class_id", [...chunk])
+            .order("class_id")
+            .order("student_id")
+            .range(from, to)
+        ),
         fetchChunkedClassRows(classIds, (chunk, from, to) =>
           supabase
             .from("class_schedules")
@@ -132,6 +134,7 @@ export default function AdminClasses() {
             .in("class_id", [...chunk])
             .order("date")
             .order("start_time")
+            .order("id")
             .range(from, to)
         ),
         fetchChunkedClassRows(classIds, (chunk, from, to) =>
@@ -145,6 +148,23 @@ export default function AdminClasses() {
       ]);
 
       if (!isLatestAdminClassesRequest(requestId, classesRequestRef.current)) return;
+
+      const primary = decideClassesPrimaryRead(null, classRows.length);
+      if (primary === "empty") {
+        setClasses([]);
+        return;
+      }
+
+      const courseMap = new Map<string, string>();
+      (coursesRes.data || []).forEach((c) => courseMap.set(c.id, c.name));
+
+      const teacherMap = new Map<string, { full_name: string; role: string }>();
+      (teachersRes.data || []).forEach((teacher) => teacherMap.set(teacher.id, { full_name: teacher.full_name, role: teacher.role }));
+
+      const studentCounts = new Map<string, number>();
+      enrollRows.forEach((en) => {
+        studentCounts.set(en.class_id, (studentCounts.get(en.class_id) || 0) + 1);
+      });
 
       // Build schedule map: class_id → [{ date, start_time, end_time }]
       const scheduleMap = new Map<string, { date: string; start_time: string; end_time: string }[]>();
@@ -182,8 +202,8 @@ export default function AdminClasses() {
 
         const isCurrentWeek = classHasScheduleInWeek(
           classSchedules.map((s) => s.date),
-          weekMondayStr,
-          weekSundayStr
+          week.start,
+          week.end
         );
 
         return {
@@ -225,7 +245,7 @@ export default function AdminClasses() {
         setLoading(false);
       }
     }
-  }, [t]);
+  }, [t, weekOffset]);
 
   useEffect(() => {
     fetchClasses();
@@ -267,20 +287,12 @@ export default function AdminClasses() {
     }
   };
 
-  // Only show classes with schedules in the current week
-  const currentWeekClasses = classes.filter((c) => c.is_current_week);
-
-  const filtered = currentWeekClasses.filter((c) => {
-    const matchSearch =
-      !search ||
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      (c.course_name || "").toLowerCase().includes(search.toLowerCase()) ||
-      (c.teacher_name || "").toLowerCase().includes(search.toLowerCase()) ||
-      c.subject.toLowerCase().includes(search.toLowerCase());
-    return matchSearch;
-  });
-
+  const selectedWeekClasses = classes.filter((c) => c.is_current_week);
+  const filtered = filterAdminClassesBySearch(selectedWeekClasses, search);
   const weekStats = summarizeAdminClassesWeek(classes);
+  const weekRange = adminWeekRangeYmd(weekOffset);
+  const weekCountLabel = t(weekOffset === 0 ? "auth.adminThisWeekClasses" : "auth.adminNextWeekClasses");
+  const weekBadgeLabel = t(weekOffset === 0 ? "auth.adminThisWeek" : "auth.adminNextWeek");
 
   return (
     <div>
@@ -291,6 +303,35 @@ export default function AdminClasses() {
             {t("auth.adminClassManagement")}
           </h2>
           <p className="text-sm text-foreground-500">{t("auth.adminClassSubtitle")}</p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <div className="inline-flex rounded-lg border border-background-200 bg-background-100 p-0.5">
+              <button
+                type="button"
+                onClick={() => setWeekOffset(0)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer whitespace-nowrap ${
+                  weekOffset === 0
+                    ? "bg-background-50 text-foreground-950 shadow-sm"
+                    : "text-foreground-500 hover:text-foreground-700"
+                }`}
+              >
+                {t("auth.adminThisWeek")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setWeekOffset(1)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer whitespace-nowrap ${
+                  weekOffset === 1
+                    ? "bg-background-50 text-foreground-950 shadow-sm"
+                    : "text-foreground-500 hover:text-foreground-700"
+                }`}
+              >
+                {t("auth.adminNextWeek")}
+              </button>
+            </div>
+            <span className="text-xs text-foreground-400 whitespace-nowrap">
+              {formatVietnamDateShortVi(weekRange.start)} – {formatVietnamDateShortVi(weekRange.end)}
+            </span>
+          </div>
         </div>
         <button
           onClick={handleCreate}
@@ -301,15 +342,15 @@ export default function AdminClasses() {
         </button>
       </div>
 
-      {/* Stats Row — hidden when the load failed so zeros are not shown as real counts */}
-      {!error && (
+      {/* Stats Row — hidden while loading or after a failed read so counts are not stale or zeroed */}
+      {!loading && !error && (
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="p-4 rounded-xl bg-background-50 border border-background-200">
           <p className="text-xs text-foreground-400 mb-1">{t("auth.adminActiveClasses")}</p>
           <p className="font-heading text-2xl font-bold text-accent-600">{weekStats.active}</p>
         </div>
         <div className="p-4 rounded-xl bg-background-50 border border-background-200">
-          <p className="text-xs text-foreground-400 mb-1">{t("auth.adminThisWeekClasses")}</p>
+          <p className="text-xs text-foreground-400 mb-1">{weekCountLabel}</p>
           <p className="font-heading text-2xl font-bold text-foreground-950">{weekStats.thisWeek}</p>
         </div>
         <div className="p-4 rounded-xl bg-background-50 border border-background-200">
@@ -402,7 +443,7 @@ export default function AdminClasses() {
                     </span>
                     {cls.is_current_week && (
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-accent-100 text-accent-700 whitespace-nowrap">
-                        {t("auth.adminThisWeek")}
+                        {weekBadgeLabel}
                       </span>
                     )}
                   </div>
@@ -525,9 +566,9 @@ export default function AdminClasses() {
         </div>
       )}
 
-      {!error && (
+      {!loading && !error && (
       <p className="mt-4 text-xs text-foreground-400">
-        {filtered.length} / {weekStats.thisWeek} {t("auth.adminClasses").toLowerCase()} – {t("auth.adminThisWeek")}
+        {filtered.length} / {weekStats.thisWeek} {t("auth.adminClasses").toLowerCase()} – {weekBadgeLabel}
       </p>
       )}
 

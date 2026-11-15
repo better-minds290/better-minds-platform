@@ -1,4 +1,11 @@
+import { addCalendarDays, getCurrentWeekRangeYmd } from "./datetime.ts";
+
 export type AdminClassesPrimaryDecision = "error" | "empty" | "continue";
+
+/** 0 = this Vietnam week, 1 = next Vietnam week. */
+export type AdminWeekOffset = 0 | 1;
+
+export const DEFAULT_ADMIN_WEEK_OFFSET: AdminWeekOffset = 0;
 
 /** A failed classes read is not an empty week. */
 export function decideClassesPrimaryRead(
@@ -64,6 +71,76 @@ export async function fetchChunkedClassRows<T>(
       if (batch.length < pageSize) break;
       from += pageSize;
     }
+  }
+  return rows;
+}
+
+/** Monday–Sunday YMD range. Next week is seven calendar days after this week. */
+export function adminWeekRangeYmd(
+  offset: AdminWeekOffset = DEFAULT_ADMIN_WEEK_OFFSET,
+  now: Date = new Date()
+): { start: string; end: string } {
+  const current = getCurrentWeekRangeYmd(now);
+  if (offset === 0) return current;
+  return {
+    start: addCalendarDays(current.start, 7),
+    end: addCalendarDays(current.end, 7),
+  };
+}
+
+/** Distinct class ids that have a schedule date inside the selected week. */
+export function classIdsInSelectedWeek(
+  schedules: readonly { class_id: string | null; date: string }[],
+  weekStart: string,
+  weekEnd: string
+): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const row of schedules) {
+    if (!row.class_id || seen.has(row.class_id)) continue;
+    if (!classHasScheduleInWeek([row.date], weekStart, weekEnd)) continue;
+    seen.add(row.class_id);
+    ids.push(row.class_id);
+  }
+  return ids;
+}
+
+export function filterAdminClassesBySearch<
+  T extends {
+    name: string;
+    course_name: string | null;
+    teacher_name: string | null;
+    subject: string;
+  },
+>(classes: readonly T[], search: string): T[] {
+  const query = search.trim().toLowerCase();
+  if (!query) return [...classes];
+  return classes.filter(
+    (cls) =>
+      cls.name.toLowerCase().includes(query) ||
+      (cls.course_name || "").toLowerCase().includes(query) ||
+      (cls.teacher_name || "").toLowerCase().includes(query) ||
+      cls.subject.toLowerCase().includes(query)
+  );
+}
+
+/** Page a date-range read so the 1,000-row cap cannot drop later rows. */
+export async function fetchAllPages<T>(
+  fetchPage: (
+    from: number,
+    to: number
+  ) => PromiseLike<{ data: T[] | null; error: { message?: string } | null }>,
+  pageSize = ADMIN_CLASS_PAGE_SIZE
+): Promise<T[]> {
+  const rows: T[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await fetchPage(from, from + pageSize - 1);
+    if (error) throw error;
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < pageSize) break;
+    from += pageSize;
   }
   return rows;
 }
