@@ -4,9 +4,9 @@ import { getSupabase } from "@/lib/supabase";
 import ClassModal from "./ClassModal";
 import ClassStudentsPanel from "./ClassStudentsPanel";
 import {
-  adminClassRelatedReadFailed,
   classHasScheduleInWeek,
   decideClassesPrimaryRead,
+  fetchChunkedClassRows,
   isLatestAdminClassesRequest,
   summarizeAdminClassesWeek,
 } from "@/lib/adminClassesView";
@@ -122,29 +122,40 @@ export default function AdminClasses() {
         studentCounts.set(en.class_id, (studentCounts.get(en.class_id) || 0) + 1);
       });
 
-      // Fetch schedules & sessions in parallel
-      const [schedulesRes, sessionsRes] = await Promise.all([
-        supabase.from("class_schedules").select("class_id, date, start_time, end_time").in("class_id", classIds).order("date").order("start_time"),
-        supabase.from("sprint_sessions").select("class_id, status").in("class_id", classIds),
+      // Chunk `.in(class_id)` so the GET URL stays valid, and page each chunk
+      // so the 1000-row response cap cannot drop sprint_sessions.
+      const [scheduleRows, sessionRows] = await Promise.all([
+        fetchChunkedClassRows(classIds, (chunk, from, to) =>
+          supabase
+            .from("class_schedules")
+            .select("class_id, date, start_time, end_time")
+            .in("class_id", [...chunk])
+            .order("date")
+            .order("start_time")
+            .range(from, to)
+        ),
+        fetchChunkedClassRows(classIds, (chunk, from, to) =>
+          supabase
+            .from("sprint_sessions")
+            .select("class_id, status")
+            .in("class_id", [...chunk])
+            .order("id")
+            .range(from, to)
+        ),
       ]);
 
       if (!isLatestAdminClassesRequest(requestId, classesRequestRef.current)) return;
 
-      if (adminClassRelatedReadFailed([schedulesRes.error, sessionsRes.error])) {
-        setError(t("auth.adminClassError"));
-        return;
-      }
-
       // Build schedule map: class_id → [{ date, start_time, end_time }]
       const scheduleMap = new Map<string, { date: string; start_time: string; end_time: string }[]>();
-      (schedulesRes.data || []).forEach((s: any) => {
+      scheduleRows.forEach((s: any) => {
         if (!scheduleMap.has(s.class_id)) scheduleMap.set(s.class_id, []);
         scheduleMap.get(s.class_id)!.push({ date: s.date, start_time: s.start_time, end_time: s.end_time });
       });
 
       // Build session stats map: class_id → { total, completed, in_progress, locked }
       const sessionStatsMap = new Map<string, { total: number; completed: number; in_progress: number; locked: number }>();
-      (sessionsRes.data || []).forEach((s: any) => {
+      sessionRows.forEach((s: any) => {
         if (!sessionStatsMap.has(s.class_id)) {
           sessionStatsMap.set(s.class_id, { total: 0, completed: 0, in_progress: 0, locked: 0 });
         }
