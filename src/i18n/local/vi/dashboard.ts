@@ -961,6 +961,7 @@ const dashboard = {
   "feedback.cardHeader": "Buổi {{session}} · {{type}} · {{when}}",
   "feedback.learnerSprintLabel": "Sprint {{sprint}}",
   "feedback.unlinkedLearner": "Học viên đã ghi danh nhưng chưa có buổi học tương ứng. Không thể điểm danh hoặc nhận xét cho đến khi admin liên kết buổi học.",
+  "feedback.duplicateSessions": "Học viên này có nhiều hơn một buổi học gắn với lớp. Không thể điểm danh hoặc nhận xét cho học viên này cho đến khi admin gỡ buổi trùng. Các học viên khác vẫn có thể được chấm.",
   "feedback.ambiguousSchedule": "Lớp này có nhiều hơn một lịch. Không thể cập nhật điểm danh hoặc nhận xét cho đến khi xác định đúng lịch.",
   "feedback.awaitingFeedbackBadge": "Chờ nhận xét",
   "feedback.absentLabel": "Vắng",

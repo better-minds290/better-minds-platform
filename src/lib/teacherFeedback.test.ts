@@ -1,17 +1,22 @@
 import {
   buildAbsentConfirmTarget,
   buildTeacherFeedbackSubmitGrades,
+  canEnableTeacherGradeSubmit,
   canMutateLearnerOnCard,
   canShowAllAbsentSessionComplete,
   canShowTeacherFeedbackSubmit,
   canTeacherDiscoverFeedbackRow,
   canTeacherDiscoverSession,
+  feedbackBlockCopyKey,
   feedbackDraftKey,
+  feedbackLayoutWrapsOnlyOnNarrow,
+  feedbackPanelLayoutClass,
   groupTeacherFeedbackCards,
   isLegitimateTaughtFeedbackHistory,
   isPendingTeacherFeedbackSession,
   isPresentLearnerMissingFeedback,
   shouldAutoCompleteSessionAfterAbsent,
+  shouldShowTeacherGradeSubmit,
   type FeedbackSessionRow,
 } from "./teacherFeedback";
 
@@ -434,6 +439,271 @@ function session(overrides: Partial<FeedbackSessionRow> & Pick<FeedbackSessionRo
   assertEqual(target.studentId, "learner-a", "12: confirm targets A");
   assertEqual(target.sessionId, "sess-a", "12: confirm uses A's session");
   assertEqual(target.studentName, "Ann Lee", "12: confirm includes name");
+}
+
+{
+  const cards = groupTeacherFeedbackCards({
+    sessions: [
+      session({ id: "sess-a", learner_id: "learner-a", class_id: "class-1", status: "awaiting_feedback" }),
+      session({ id: "sess-b", learner_id: "learner-b", class_id: "class-1", status: "in_progress" }),
+    ],
+    enrollments: [
+      { class_id: "class-1", student_id: "learner-a" },
+      { class_id: "class-1", student_id: "learner-b" },
+    ],
+    attendance: [],
+    schedules: [{ id: "sch-1", class_id: "class-1" }],
+    profiles: [
+      { id: "learner-a", full_name: "Ann", email: "a@x.com" },
+      { id: "learner-b", full_name: "Ben", email: "b@x.com" },
+    ],
+  });
+  const b = cards[0].learners.find((l) => l.studentId === "learner-b");
+  assertEqual(cards.length, 1, "13: class with a feedback session still includes other statuses");
+  assertEqual(b?.sessionId, "sess-b", "13: in_progress session is matched");
+  assertEqual(b?.mutationBlockedReason, null, "13: in_progress is not a missing session");
+  assertEqual(b?.sessionStatus, "in_progress", "13: original status is kept");
+}
+
+{
+  const cards = groupTeacherFeedbackCards({
+    sessions: [session({ id: "sess-b", learner_id: "learner-b", class_id: "class-9", status: "in_progress" })],
+    enrollments: [{ class_id: "class-9", student_id: "learner-b" }],
+    attendance: [],
+    schedules: [{ id: "sch-9", class_id: "class-9" }],
+    profiles: [{ id: "learner-b", full_name: "Ben", email: "b@x.com" }],
+  });
+  assertEqual(cards.length, 0, "13b: a class with no feedback-ready session is not a feedback card");
+}
+
+{
+  const cards = groupTeacherFeedbackCards({
+    sessions: [session({ id: "sess-a", learner_id: "learner-a", class_id: "class-1", status: "awaiting_feedback" })],
+    enrollments: [
+      { class_id: "class-1", student_id: "learner-a" },
+      { class_id: "class-1", student_id: "learner-b" },
+    ],
+    attendance: [],
+    schedules: [{ id: "sch-1", class_id: "class-1" }],
+    profiles: [
+      { id: "learner-a", full_name: "Ann", email: "a@x.com" },
+      { id: "learner-b", full_name: "Ben", email: "b@x.com" },
+    ],
+  });
+  const a = cards[0].learners.find((l) => l.studentId === "learner-a")!;
+  const b = cards[0].learners.find((l) => l.studentId === "learner-b")!;
+  const drafts = {
+    [feedbackDraftKey(a.sessionId, a.studentId)]: { grade: 4, feedback: "Clear progress" },
+    [feedbackDraftKey(b.sessionId, b.studentId)]: { grade: 3, feedback: "must not be sent" },
+  };
+  assertEqual(b.mutationBlockedReason, "missing_session", "14: B genuinely missing");
+  assertEqual(b.sessionId, null, "14: B has no session id");
+  assertEqual(cards[0].status, "awaiting_feedback", "14: class stays pending");
+  assertEqual(
+    canEnableTeacherGradeSubmit({ scheduleAmbiguous: false, learners: cards[0].learners, drafts }),
+    true,
+    "14: A unsaved grade enables submit"
+  );
+  const payload = buildTeacherFeedbackSubmitGrades({
+    sessionId: cards[0].representativeSessionId || "sess-a",
+    learners: cards[0].learners,
+    drafts,
+  });
+  assertEqual(payload, [{ student_id: "learner-a", grade: 4, feedback: "Clear progress" }], "14: payload is only A's valid grade");
+  assertEqual(payload.some((row) => row.student_id === "learner-b"), false, "14: B is not in the payload");
+  assertEqual(feedbackBlockCopyKey(b.mutationBlockedReason, false), "feedback.unlinkedLearner", "14: missing copy");
+}
+
+{
+  const cards = groupTeacherFeedbackCards({
+    sessions: [
+      session({
+        id: "sess-a",
+        learner_id: "learner-a",
+        class_id: "class-1",
+        status: "completed",
+        completion_rating: 5,
+        teacher_feedback: "Keep this",
+      }),
+    ],
+    enrollments: [
+      { class_id: "class-1", student_id: "learner-a" },
+      { class_id: "class-1", student_id: "learner-b" },
+    ],
+    attendance: [
+      { id: "att-a", schedule_id: "sch-1", student_id: "learner-a", grade: 5, teacher_feedback: "Keep this", status: "present" },
+    ],
+    schedules: [{ id: "sch-1", class_id: "class-1" }],
+    profiles: [
+      { id: "learner-a", full_name: "Ann", email: "a@x.com" },
+      { id: "learner-b", full_name: "Ben", email: "b@x.com" },
+    ],
+  });
+  const payload = buildTeacherFeedbackSubmitGrades({
+    sessionId: "sess-a",
+    learners: cards[0].learners,
+    drafts: {
+      [feedbackDraftKey("sess-a", "learner-a")]: { grade: 1, feedback: "overwrite attempt" },
+      [feedbackDraftKey(null, "learner-b")]: { grade: 2, feedback: "blocked draft" },
+    },
+  });
+  assertEqual(payload, [{ student_id: "learner-a", grade: 5, feedback: "Keep this" }], "15: stored A is preserved and B is omitted");
+  assertEqual(
+    canEnableTeacherGradeSubmit({ scheduleAmbiguous: false, learners: cards[0].learners, drafts: {} }),
+    false,
+    "15: stored A and blocked B do not enable an empty submit"
+  );
+}
+
+{
+  const cards = groupTeacherFeedbackCards({
+    sessions: [
+      session({ id: "sess-a", learner_id: "learner-a", class_id: "class-1", status: "awaiting_feedback" }),
+      session({ id: "sess-b1", learner_id: "learner-b", class_id: "class-1", status: "awaiting_feedback" }),
+      session({ id: "sess-b2", learner_id: "learner-b", class_id: "class-1", status: "completed" }),
+    ],
+    enrollments: [
+      { class_id: "class-1", student_id: "learner-a" },
+      { class_id: "class-1", student_id: "learner-b" },
+    ],
+    attendance: [],
+    schedules: [{ id: "sch-1", class_id: "class-1" }],
+    profiles: [
+      { id: "learner-a", full_name: "Ann", email: "a@x.com" },
+      { id: "learner-b", full_name: "Ben", email: "b@x.com" },
+    ],
+  });
+  const a = cards[0].learners.find((l) => l.studentId === "learner-a")!;
+  const b = cards[0].learners.find((l) => l.studentId === "learner-b")!;
+  assertEqual(a.sessionId, "sess-a", "16: A keeps the single session");
+  assertEqual(b.sessionId, null, "16: duplicate learner has no chosen session");
+  assertEqual(b.sprintId, null, "16: duplicate learner does not borrow a sprint");
+  assertEqual(b.mutationBlockedReason, "duplicate_sessions", "16: duplicate reason");
+  assertEqual(canMutateLearnerOnCard({ scheduleAmbiguous: false, learner: a }), true, "16: A remains editable");
+  assertEqual(canMutateLearnerOnCard({ scheduleAmbiguous: false, learner: b }), false, "16: B stays blocked");
+  assertEqual(feedbackBlockCopyKey(b.mutationBlockedReason, false), "feedback.duplicateSessions", "16: duplicate copy");
+  const drafts = { [feedbackDraftKey(a.sessionId, a.studentId)]: { grade: 3, feedback: "A only" } };
+  assertEqual(
+    canEnableTeacherGradeSubmit({ scheduleAmbiguous: false, learners: cards[0].learners, drafts }),
+    true,
+    "16: duplicate classmate does not disable A"
+  );
+}
+
+{
+  const cards = groupTeacherFeedbackCards({
+    sessions: [
+      session({
+        id: "sess-a",
+        learner_id: "learner-a",
+        class_id: "class-1",
+        status: "completed",
+        completion_rating: 4,
+        teacher_feedback: "Solid",
+      }),
+      session({ id: "sess-b", learner_id: "learner-b", class_id: "class-1", status: "absent" }),
+    ],
+    enrollments: [
+      { class_id: "class-1", student_id: "learner-a" },
+      { class_id: "class-1", student_id: "learner-b" },
+    ],
+    attendance: [
+      { id: "att-a", schedule_id: "sch-1", student_id: "learner-a", grade: 4, teacher_feedback: "Solid", status: "present" },
+      { id: "att-b", schedule_id: "sch-1", student_id: "learner-b", grade: null, teacher_feedback: null, status: "absent" },
+    ],
+    schedules: [{ id: "sch-1", class_id: "class-1", status: "completed" }],
+    profiles: [
+      { id: "learner-a", full_name: "Ann", email: "a@x.com" },
+      { id: "learner-b", full_name: "Ben", email: "b@x.com" },
+    ],
+  });
+  const a = cards[0].learners.find((l) => l.studentId === "learner-a")!;
+  const b = cards[0].learners.find((l) => l.studentId === "learner-b")!;
+  assertEqual(cards[0].status, "completed", "17: graded A and absent B complete the card");
+  assertEqual(a.sessionId, "sess-a", "17: A session kept");
+  assertEqual(b.sessionId, "sess-b", "17: B absent session kept");
+  assertEqual(b.attendanceStatus, "absent", "17: B stays absent");
+  assertEqual(
+    shouldShowTeacherGradeSubmit({ sessionStatus: cards[0].status, scheduleAmbiguous: false, learners: cards[0].learners }),
+    false,
+    "17: nothing new to grade"
+  );
+  const pendingA = groupTeacherFeedbackCards({
+    sessions: [
+      session({ id: "sess-a", learner_id: "learner-a", class_id: "class-1", status: "awaiting_feedback" }),
+      session({ id: "sess-b", learner_id: "learner-b", class_id: "class-1", status: "absent" }),
+    ],
+    enrollments: [
+      { class_id: "class-1", student_id: "learner-a" },
+      { class_id: "class-1", student_id: "learner-b" },
+    ],
+    attendance: [
+      { id: "att-b", schedule_id: "sch-1", student_id: "learner-b", grade: null, teacher_feedback: null, status: "absent" },
+    ],
+    schedules: [{ id: "sch-1", class_id: "class-1" }],
+    profiles: [
+      { id: "learner-a", full_name: "Ann", email: "a@x.com" },
+      { id: "learner-b", full_name: "Ben", email: "b@x.com" },
+    ],
+  });
+  const drafts = { [feedbackDraftKey("sess-a", "learner-a")]: { grade: 4, feedback: "After absence" } };
+  assertEqual(
+    canEnableTeacherGradeSubmit({ scheduleAmbiguous: false, learners: pendingA[0].learners, drafts }),
+    true,
+    "17: absent B does not block A's new grade"
+  );
+  assertEqual(
+    buildTeacherFeedbackSubmitGrades({ sessionId: "sess-a", learners: pendingA[0].learners, drafts }),
+    [{ student_id: "learner-a", grade: 4, feedback: "After absence" }],
+    "17: absent B is omitted from the payload"
+  );
+}
+
+{
+  const empty = buildTeacherFeedbackSubmitGrades({
+    sessionId: "sess-a",
+    learners: [
+      { studentId: "learner-a", sessionId: "sess-a", grade: null, feedback: null, attendanceStatus: null },
+      { studentId: "learner-b", sessionId: null, grade: null, feedback: null, attendanceStatus: null, mutationBlockedReason: "missing_session" },
+    ],
+    drafts: {
+      [feedbackDraftKey("sess-a", "learner-a")]: { grade: 3, feedback: "   " },
+      [feedbackDraftKey(null, "learner-b")]: { grade: 0, feedback: "" },
+    },
+  });
+  assertEqual(empty, [], "18: blank feedback and blocked learners produce no payload");
+  assertEqual(
+    canEnableTeacherGradeSubmit({
+      scheduleAmbiguous: false,
+      learners: [
+        { studentId: "learner-a", sessionId: "sess-a", grade: null, feedback: null, attendanceStatus: null },
+      ],
+      drafts: { [feedbackDraftKey("sess-a", "learner-a")]: { grade: 3, feedback: "   " } },
+    }),
+    false,
+    "18: blank draft does not enable submit"
+  );
+  const valid = buildTeacherFeedbackSubmitGrades({
+    sessionId: "sess-a",
+    learners: [{ studentId: "learner-a", sessionId: "sess-a", grade: null, feedback: null, attendanceStatus: null }],
+    drafts: { [feedbackDraftKey("sess-a", "learner-a")]: { grade: 4, feedback: "  Ready  " } },
+  });
+  assertEqual(valid, [{ student_id: "learner-a", grade: 4, feedback: "Ready" }], "18: valid draft is trimmed");
+  assertEqual(valid.every((row) => row.grade >= 1 && row.grade <= 5 && row.feedback.trim().length > 0), true, "18: payload rows are valid");
+}
+
+{
+  const wrapping = [
+    feedbackPanelLayoutClass.cardHeader,
+    feedbackPanelLayoutClass.learnerStatusRow,
+    feedbackPanelLayoutClass.actionRow,
+    feedbackPanelLayoutClass.absentActionGroup,
+  ];
+  for (const className of wrapping) {
+    assertEqual(feedbackLayoutWrapsOnlyOnNarrow(className), true, `19: ${className} wraps only below sm`);
+  }
+  assertEqual(feedbackPanelLayoutClass.cardHeaderStatus.includes("max-sm:w-full"), true, "19: header status drops to its own row on narrow");
+  assertEqual(feedbackPanelLayoutClass.cardHeaderStatus.includes("flex-wrap"), false, "19: header status does not change the desktop row");
 }
 
 assertEqual(shouldAutoCompleteSessionAfterAbsent(), false, "never auto-complete after one absent");

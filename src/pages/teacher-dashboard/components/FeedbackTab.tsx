@@ -5,15 +5,19 @@ import { getSupabase } from "@/lib/supabase";
 import { formatVietnamDateTime, getUiDateLocale } from "@/lib/datetime";
 import {
   buildTeacherFeedbackSubmitGrades,
+  canEnableTeacherGradeSubmit,
   canMutateLearnerOnCard,
   canShowAllAbsentSessionComplete,
-  canShowTeacherFeedbackSubmit,
-  canTeacherDiscoverFeedbackRow,
+  feedbackBlockCopyKey,
   feedbackDraftKey,
+  feedbackPanelLayoutClass,
   groupTeacherFeedbackCards,
+  isLearnerBlockedFromFeedback,
   isPendingTeacherFeedbackSession,
+  shouldShowTeacherGradeSubmit,
   type FeedbackAttendanceRow,
   type FeedbackEnrollmentRow,
+  type FeedbackMutationBlock,
   type FeedbackProfileRow,
   type FeedbackScheduleRow,
   type FeedbackSessionRow,
@@ -33,7 +37,7 @@ interface SessionStudent {
   enrollmentId: string | null;
   sessionStatus: string | null;
   courseName: string | null;
-  mutationBlockedReason: "missing_session" | "ambiguous_schedule" | null;
+  mutationBlockedReason: FeedbackMutationBlock;
 }
 
 interface PendingSession {
@@ -82,7 +86,7 @@ export default function FeedbackTab() {
   const markStudentAbsent = async (session: PendingSession, student: SessionStudent): Promise<boolean> => {
     if (markingAbsentLock.current) return false;
     if (!canMutateLearnerOnCard({ scheduleAmbiguous: session.scheduleAmbiguous, learner: student })) {
-      setErrorMsg(session.scheduleAmbiguous ? t("feedback.ambiguousSchedule") : t("feedback.unlinkedLearner"));
+      setErrorMsg(t(feedbackBlockCopyKey(student.mutationBlockedReason, session.scheduleAmbiguous)));
       setTimeout(() => setErrorMsg(null), 4000);
       return false;
     }
@@ -176,9 +180,7 @@ export default function FeedbackTab() {
     setLoading(true);
     setFetchError(false);
     try {
-      const { data: sessionsData, error: sessionsErr } = await supabase
-        .from("sprint_sessions")
-        .select(`
+      const sessionSelect = `
           id, sprint_id, session_number, session_type, status, scheduled_at, class_id, teacher_id,
           teacher_feedback, completion_rating, feedback,
           sprint:learning_sprints!sprint_id(
@@ -188,7 +190,10 @@ export default function FeedbackTab() {
               course:courses!enrollments_course_id_fkey(name)
             )
           )
-        `)
+        `;
+      const { data: sessionsData, error: sessionsErr } = await supabase
+        .from("sprint_sessions")
+        .select(sessionSelect)
         .eq("teacher_id", profile.id)
         .in("status", ["awaiting_feedback", "completed", "absent"])
         .neq("session_type", "self_study")
@@ -196,22 +201,33 @@ export default function FeedbackTab() {
 
       if (sessionsErr) throw sessionsErr;
 
-      const visible = (sessionsData || []).filter((row: { teacher_id: string | null; status: string; session_type: string; class_id: string | null }) =>
-        canTeacherDiscoverFeedbackRow({
-          teacherId: row.teacher_id || profile.id,
-          status: row.status,
-          sessionType: row.session_type,
-          classId: row.class_id,
-        })
-      );
+      type FeedbackSessionQueryRow = Record<string, unknown> & { id: string; class_id: string | null };
+      const anchorRows = (sessionsData || []) as FeedbackSessionQueryRow[];
+      const anchorClassIds = [...new Set(anchorRows.map((row) => row.class_id).filter(Boolean))] as string[];
+      let mergedRows = anchorRows;
+      if (anchorClassIds.length > 0) {
+        const { data: classSessionRows, error: classSessErr } = await supabase
+          .from("sprint_sessions")
+          .select(sessionSelect)
+          .eq("teacher_id", profile.id)
+          .in("class_id", anchorClassIds)
+          .neq("session_type", "self_study");
+        if (classSessErr) throw classSessErr;
+        const byId = new Map<string, FeedbackSessionQueryRow>();
+        anchorRows.forEach((row) => byId.set(row.id, row));
+        ((classSessionRows || []) as FeedbackSessionQueryRow[]).forEach((row) => {
+          if (!byId.has(row.id)) byId.set(row.id, row);
+        });
+        mergedRows = [...byId.values()];
+      }
 
-      if (visible.length === 0) {
+      if (mergedRows.length === 0) {
         setSessions([]);
         setLoading(false);
         return;
       }
 
-      const sessionRows: FeedbackSessionRow[] = visible.map((row: Record<string, unknown>) => {
+      const sessionRows: FeedbackSessionRow[] = mergedRows.map((row: Record<string, unknown>) => {
         const sprint = row.sprint as {
           sprint_number?: number;
           enrollment?: { id?: string; learner_id?: string; course?: { name?: string } };
@@ -385,19 +401,30 @@ export default function FeedbackTab() {
       const { data: authData } = await supabase.auth.getSession();
       const teacherId = authData?.session?.user?.id;
       const absSet = absentStudents[session.cardId] || new Set<string>();
+      const learnerInputs = session.students.map((st) => ({
+        studentId: st.studentId,
+        sessionId: st.sessionId,
+        grade: st.grade,
+        feedback: st.feedback,
+        mutationBlockedReason: st.mutationBlockedReason,
+        attendanceStatus:
+          st.attendanceStatus === "absent" || absSet.has(st.studentId) ? "absent" : st.attendanceStatus,
+      }));
 
       const grades = buildTeacherFeedbackSubmitGrades({
         sessionId: session.sessionId,
-        learners: session.students.map((st) => ({
-          studentId: st.studentId,
-          sessionId: st.sessionId,
-          grade: st.grade,
-          feedback: st.feedback,
-          attendanceStatus:
-            st.attendanceStatus === "absent" || absSet.has(st.studentId) ? "absent" : st.attendanceStatus,
-        })),
+        learners: learnerInputs,
         drafts: studentGrades,
       });
+      const allAbsent = canShowAllAbsentSessionComplete({
+        sessionStatus: session.status,
+        learners: learnerInputs,
+      });
+      if (grades.length === 0 && !allAbsent) {
+        setErrorMsg(t("feedback.submitError"));
+        setSavingId(null);
+        return;
+      }
 
       const { data: result, error } = await supabase.functions.invoke("complete-session", {
         body: {
@@ -411,6 +438,7 @@ export default function FeedbackTab() {
       if (result?.error) throw new Error(result.error);
 
       const completed = !!result?.session_completed;
+      const submittedByStudent = new Map(grades.map((row) => [row.student_id, row]));
       setSessions((prev) =>
         prev.map((s) =>
           s.cardId === session.cardId
@@ -418,13 +446,15 @@ export default function FeedbackTab() {
                 ...s,
                 status: completed ? "completed" : s.status,
                 students: s.students.map((st) => {
-                  const key = feedbackDraftKey(st.sessionId, st.studentId);
+                  const row = submittedByStudent.get(st.studentId);
+                  if (!row || isLearnerBlockedFromFeedback(st)) return st;
                   const abs = st.attendanceStatus === "absent" || (absentStudents[s.cardId] || new Set()).has(st.studentId);
+                  if (abs) return st;
                   return {
                     ...st,
-                    grade: abs ? st.grade : studentGrades[key]?.grade || st.grade,
-                    feedback: abs ? st.feedback : studentGrades[key]?.feedback || st.feedback,
-                    sessionStatus: abs ? st.sessionStatus : completed && !abs ? "completed" : st.sessionStatus,
+                    grade: row.grade,
+                    feedback: row.feedback,
+                    sessionStatus: completed ? "completed" : st.sessionStatus,
                   };
                 }),
               }
@@ -627,10 +657,12 @@ export default function FeedbackTab() {
               sessionId: s.sessionId,
               grade: s.grade,
               feedback: s.feedback,
+              mutationBlockedReason: s.mutationBlockedReason,
               attendanceStatus: s.attendanceStatus === "absent" || absSet.has(s.studentId) ? "absent" : s.attendanceStatus,
             }));
-            const showSubmit = canShowTeacherFeedbackSubmit({
+            const showSubmit = shouldShowTeacherGradeSubmit({
               sessionStatus: session.status,
+              scheduleAmbiguous: session.scheduleAmbiguous,
               learners: learnersForAction,
             });
             const showAllAbsentComplete = canShowAllAbsentSessionComplete({
@@ -653,7 +685,7 @@ export default function FeedbackTab() {
               >
                 <div
                   onClick={() => toggleExpand(session.cardId)}
-                  className="flex items-start gap-4 p-5 cursor-pointer group"
+                  className={feedbackPanelLayoutClass.cardHeader}
                 >
                   <div className="w-10 h-10 flex items-center justify-center rounded-full bg-primary-100 text-primary-700 font-semibold text-sm shrink-0">
                     <i className={session.sessionType === "foreign_teacher" ? "ri-global-line" : "ri-user-voice-line"}></i>
@@ -725,7 +757,7 @@ export default function FeedbackTab() {
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className={feedbackPanelLayoutClass.cardHeaderStatus}>
                     {session.status === "completed" ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-accent-100 text-accent-700 whitespace-nowrap">
                         <i className="ri-check-double-line text-[10px]"></i>
@@ -775,7 +807,7 @@ export default function FeedbackTab() {
                                     : "bg-secondary-50/40 border-secondary-200"
                             }`}
                           >
-                            <div className="flex items-center justify-between mb-3">
+                            <div className={feedbackPanelLayoutClass.learnerStatusRow}>
                               <div className="flex items-center gap-2">
                                 <div className="w-8 h-8 flex items-center justify-center rounded-full bg-primary-100 text-primary-600 text-xs font-bold">
                                   {(student.studentName || "?").charAt(0).toUpperCase()}
@@ -820,9 +852,7 @@ export default function FeedbackTab() {
                               <div className="mt-2 p-3 rounded bg-background-50 border border-background-100">
                                 <p className="text-xs text-accent-700 flex items-center gap-1.5">
                                   <i className="ri-error-warning-line"></i>
-                                  {student.mutationBlockedReason === "ambiguous_schedule" || session.scheduleAmbiguous
-                                    ? t("feedback.ambiguousSchedule")
-                                    : t("feedback.unlinkedLearner")}
+                                  {t(feedbackBlockCopyKey(student.mutationBlockedReason, session.scheduleAmbiguous))}
                                 </p>
                               </div>
                             ) : isAbsent ? (
@@ -885,9 +915,9 @@ export default function FeedbackTab() {
                       {/* Submit remains available for taught sessions with missing grades,
                           including Completed after Admin force-complete. */}
                       {showSubmit && (
-                        <div className="flex items-center justify-end gap-3 pt-3 border-t border-background-200">
+                        <div className={feedbackPanelLayoutClass.actionRow}>
                           {/* Vắng học buttons for each non-graded student */}
-                          <div className="flex items-center gap-2 mr-auto">
+                          <div className={feedbackPanelLayoutClass.absentActionGroup}>
                             {session.students.map((st) => {
                               const alreadyAbsent = st.attendanceStatus === "absent" || absSet.has(st.studentId);
                               if (alreadyAbsent || st.grade !== null) return null;
@@ -926,13 +956,17 @@ export default function FeedbackTab() {
                           <button
                             type="button"
                             onClick={() => submitGrades(session)}
-                            disabled={isSaving || session.scheduleAmbiguous || !session.students.every((st) => {
-                              const alreadyAbsent = st.attendanceStatus === "absent" || absSet.has(st.studentId);
-                              if (alreadyAbsent || st.grade !== null) return true;
-                              if (!canMutateLearnerOnCard({ scheduleAmbiguous: session.scheduleAmbiguous, learner: st })) return false;
-                              const k = feedbackDraftKey(st.sessionId, st.studentId);
-                              const g = studentGrades[k];
-                              return g && g.feedback.trim().length > 0;
+                            disabled={isSaving || !canEnableTeacherGradeSubmit({
+                              scheduleAmbiguous: session.scheduleAmbiguous,
+                              learners: session.students.map((st) => ({
+                                studentId: st.studentId,
+                                sessionId: st.sessionId,
+                                grade: st.grade,
+                                feedback: st.feedback,
+                                mutationBlockedReason: st.mutationBlockedReason,
+                                attendanceStatus: st.attendanceStatus === "absent" || absSet.has(st.studentId) ? "absent" : st.attendanceStatus,
+                              })),
+                              drafts: studentGrades,
                             })}
                             className="inline-flex items-center gap-1.5 px-5 py-2 rounded-md text-xs font-semibold bg-primary-500 text-background-50 hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 whitespace-nowrap cursor-pointer"
                           >
@@ -953,8 +987,8 @@ export default function FeedbackTab() {
 
                       {/* Submit button when ALL students are absent - allow completion without grades */}
                       {showAllAbsentComplete && (
-                        <div className="flex items-center justify-end gap-3 pt-3 border-t border-background-200">
-                          <span className="text-xs text-foreground-500 mr-auto flex items-center gap-1">
+                        <div className={feedbackPanelLayoutClass.actionRow}>
+                          <span className="text-xs text-foreground-500 mr-auto flex items-center gap-1 max-sm:w-full max-sm:mr-0">
                             <i className="ri-information-line"></i>
                             {t("feedback.allAbsentInfo")}
                           </span>

@@ -5,6 +5,7 @@ import {
   notifyAdminClassAssignmentAfterSuccess,
   resolveReplyTo,
 } from "../_shared/email.ts";
+import { rollbackNewEnrollment, type EnrollmentRollbackReport } from "../_shared/bookingEnrollmentRollback.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -322,6 +323,20 @@ serve(async (req: Request) => {
       const createdScheduleIds: string[] = [];
       const maxStudents = 2;
       let addingToGroupClass = false;
+      let insertedEnrollmentId: string | null = null;
+
+      const rollbackInsertedEnrollment = async (): Promise<EnrollmentRollbackReport> => {
+        const rollback = await rollbackNewEnrollment(async (enrollmentId) => {
+          const { error } = await supabaseClient.from("class_enrollments").delete().eq("id", enrollmentId);
+          return { error: error ? { message: error.message } : null };
+        }, insertedEnrollmentId);
+        if (rollback.failed) {
+          await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "5-rollback-enrollment", status: "error", detail: `New enrollment rollback failed: ${rollback.error}` });
+        } else if (rollback.attempted) {
+          await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "5-rollback-enrollment", status: "ok", detail: `Rolled back new enrollment ${rollback.deletedEnrollmentId}` });
+        }
+        return rollback;
+      };
 
       const canReuseSchedule = existingSchedule && existingSchedule.status !== "completed";
 
@@ -363,6 +378,7 @@ serve(async (req: Request) => {
             await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "4-enroll-reuse", status: "error", detail: `Enroll failed: ${enrollErr?.message || "no row"}` });
             return new Response(JSON.stringify({ error: "Không thể xếp học viên vào lớp", detail: enrollErr?.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
           }
+          insertedEnrollmentId = enrolled.id;
           console.log(`[ADMIN-ASSIGN][${REQ}] Enrolled learner into existing class ${classId}`);
         }
       } else {
@@ -410,6 +426,7 @@ serve(async (req: Request) => {
           await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "4-enroll-new", status: "error", detail: `Enroll failed: ${enrollErr?.message || "no row"}` });
           return new Response(JSON.stringify({ error: "Không thể xếp học viên vào lớp", detail: enrollErr?.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
+        insertedEnrollmentId = enrolled.id;
         console.log(`[ADMIN-ASSIGN][${REQ}] Enrolled learner into new class ${classId}`);
       }
 
@@ -421,24 +438,20 @@ serve(async (req: Request) => {
 
       const { data: updatedRows, error: updateErr } = await supabaseClient.from("sprint_sessions").update(updatePayload).eq("id", sprint_session_id).select("id, class_id, teacher_id, scheduled_at, status, sprint_id, session_number");
 
-      if (updateErr) {
-        console.error(`[ADMIN-ASSIGN][${REQ}] Session update ERROR:`, updateErr.message, updateErr.code);
-        await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "5-update-session", status: "error", detail: `Update error: ${updateErr.message}`, data: { code: updateErr.code } });
+      if (updateErr || !updatedRows || updatedRows.length === 0) {
+        const failureDetail = updateErr?.message || "Update affected 0 rows";
+        console.error(`[ADMIN-ASSIGN][${REQ}] Session update failed:`, failureDetail, updateErr?.code);
+        await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "5-update-session", status: "error", detail: failureDetail, data: { code: updateErr?.code } });
+        const enrollmentRollback = await rollbackInsertedEnrollment();
         if (createdClassIds.length > 0) {
           for (const sid of createdScheduleIds) await supabaseClient.from("class_schedules").delete().eq("id", sid);
           for (const cid of createdClassIds) await supabaseClient.from("classes").delete().eq("id", cid);
         }
-        return new Response(JSON.stringify({ error: "Không thể cập nhật buổi học", detail: updateErr.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
-      if (!updatedRows || updatedRows.length === 0) {
-        console.error(`[ADMIN-ASSIGN][${REQ}] Session update returned 0 rows!`);
-        await logDiagnostic(supabaseClient, { action: "admin_assign", learner_id, sprint_session_id, step: "5-update-session", status: "error", detail: "Update affected 0 rows" });
-        if (createdClassIds.length > 0) {
-          for (const sid of createdScheduleIds) await supabaseClient.from("class_schedules").delete().eq("id", sid);
-          for (const cid of createdClassIds) await supabaseClient.from("classes").delete().eq("id", cid);
-        }
-        return new Response(JSON.stringify({ error: "Không thể cập nhật buổi học — không tìm thấy session" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({
+          error: updateErr ? "Không thể cập nhật buổi học" : "Không thể cập nhật buổi học — không tìm thấy session",
+          detail: failureDetail,
+          enrollment_rollback: enrollmentRollback,
+        }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       const updated = updatedRows[0];

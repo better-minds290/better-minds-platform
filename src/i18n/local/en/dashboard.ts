@@ -1128,6 +1128,7 @@ const dashboard = {
   "feedback.cardHeader": "Session {{session}} · {{type}} · {{when}}",
   "feedback.learnerSprintLabel": "Sprint {{sprint}}",
   "feedback.unlinkedLearner": "This learner is enrolled but has no matching session. Attendance and feedback are disabled until admin links a session.",
+  "feedback.duplicateSessions": "This learner has more than one session linked to this class. Attendance and feedback stay disabled for this learner until admin removes the extra link. Other learners can still be graded.",
   "feedback.ambiguousSchedule": "This class has more than one schedule. Attendance and feedback cannot be updated until the correct schedule is identified.",
   "feedback.absentLabel": "Absent",
   "feedback.absentBadge": "Marked absent",

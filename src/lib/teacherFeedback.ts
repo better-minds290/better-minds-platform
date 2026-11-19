@@ -6,15 +6,16 @@
  * Group classes by class_id only (never sprint number). One class = one card.
  */
 
+export type FeedbackMutationBlock = "missing_session" | "duplicate_sessions" | "ambiguous_schedule" | null;
+
 export type TeacherFeedbackLearner = {
   studentId?: string;
   sessionId?: string | null;
   grade: number | null;
   feedback?: string | null;
   attendanceStatus?: string | null;
+  mutationBlockedReason?: FeedbackMutationBlock;
 };
-
-export type FeedbackMutationBlock = "missing_session" | "ambiguous_schedule" | null;
 
 export type FeedbackCardLearner = {
   studentId: string;
@@ -156,6 +157,88 @@ export function canMutateLearnerOnCard(input: {
   return true;
 }
 
+/** Explicit null session or a block reason. Undefined sessionId stays eligible for older callers. */
+export function isLearnerBlockedFromFeedback(learner: {
+  sessionId?: string | null;
+  mutationBlockedReason?: FeedbackMutationBlock;
+}): boolean {
+  if (learner.mutationBlockedReason) return true;
+  if (learner.sessionId === null) return true;
+  return false;
+}
+
+export function isValidFeedbackDraft(draft: { grade: number; feedback: string } | undefined): boolean {
+  if (!draft) return false;
+  return draft.grade >= 1 && draft.grade <= 5 && draft.feedback.trim().length > 0;
+}
+
+function hasStoredGradeAndFeedback(learner: TeacherFeedbackLearner): boolean {
+  return (
+    learner.grade != null &&
+    learner.grade >= 1 &&
+    learner.grade <= 5 &&
+    !!learner.feedback &&
+    learner.feedback.trim().length > 0
+  );
+}
+
+/** A learner who can still receive a new grade. Blocked, absent, and already-stored learners are not eligible. */
+export function isEligibleForNewFeedback(learner: TeacherFeedbackLearner): boolean {
+  if (!learner.studentId || !learner.sessionId) return false;
+  if (learner.attendanceStatus === "absent") return false;
+  if (isLearnerBlockedFromFeedback(learner)) return false;
+  if (hasStoredGradeAndFeedback(learner)) return false;
+  return true;
+}
+
+export function shouldShowTeacherGradeSubmit(input: {
+  sessionStatus: string;
+  scheduleAmbiguous: boolean;
+  learners: TeacherFeedbackLearner[];
+}): boolean {
+  if (input.scheduleAmbiguous) return false;
+  if (input.sessionStatus !== "awaiting_feedback" && input.sessionStatus !== "completed") return false;
+  return input.learners.some((learner) => isEligibleForNewFeedback(learner));
+}
+
+/** Enable only when at least one eligible learner has a valid unsaved draft. */
+export function canEnableTeacherGradeSubmit(input: {
+  scheduleAmbiguous: boolean;
+  learners: TeacherFeedbackLearner[];
+  drafts: Record<string, { grade: number; feedback: string }>;
+}): boolean {
+  if (input.scheduleAmbiguous) return false;
+  return input.learners.some((learner) => {
+    if (!learner.studentId || !isEligibleForNewFeedback(learner)) return false;
+    return isValidFeedbackDraft(input.drafts[feedbackDraftKey(learner.sessionId, learner.studentId)]);
+  });
+}
+
+export function feedbackBlockCopyKey(
+  reason: FeedbackMutationBlock,
+  scheduleAmbiguous: boolean
+): "feedback.ambiguousSchedule" | "feedback.duplicateSessions" | "feedback.unlinkedLearner" {
+  if (scheduleAmbiguous || reason === "ambiguous_schedule") return "feedback.ambiguousSchedule";
+  if (reason === "duplicate_sessions") return "feedback.duplicateSessions";
+  return "feedback.unlinkedLearner";
+}
+
+/**
+ * Narrow layout wraps. Desktop (sm and up) stays a single row because wrap is max-sm only.
+ */
+export const feedbackPanelLayoutClass = {
+  cardHeader: "flex items-start gap-4 p-5 cursor-pointer group max-sm:flex-wrap",
+  cardHeaderStatus: "flex items-center gap-2 shrink-0 max-sm:w-full max-sm:justify-end",
+  learnerStatusRow: "flex items-center justify-between mb-3 gap-2 max-sm:flex-wrap",
+  actionRow: "flex items-center justify-end gap-3 pt-3 border-t border-background-200 max-sm:flex-wrap",
+  absentActionGroup: "flex items-center gap-2 mr-auto max-sm:mr-0 max-sm:w-full max-sm:flex-wrap",
+} as const;
+
+export function feedbackLayoutWrapsOnlyOnNarrow(className: string): boolean {
+  const withoutNarrow = className.split("max-sm:flex-wrap").join("");
+  return className.includes("max-sm:flex-wrap") && !withoutNarrow.includes("flex-wrap");
+}
+
 export function buildAbsentConfirmTarget(learner: FeedbackCardLearner): {
   studentId: string;
   studentName: string;
@@ -174,30 +257,37 @@ export function buildAbsentConfirmTarget(learner: FeedbackCardLearner): {
   };
 }
 
-/** Already-graded learners keep stored values; only missing learners use draft input. */
+/**
+ * Already-graded learners keep stored values. Blocked learners are omitted.
+ * Rows without a grade of 1–5 and non-empty feedback are omitted.
+ */
 export function buildTeacherFeedbackSubmitGrades(input: {
   sessionId: string;
   learners: TeacherFeedbackLearner[];
   drafts: Record<string, { grade: number; feedback: string }>;
 }): Array<{ student_id: string; grade: number; feedback: string }> {
-  return input.learners
-    .filter((learner) => learner.studentId && learner.attendanceStatus !== "absent")
-    .map((learner) => {
-      const key = feedbackDraftKey(learner.sessionId || input.sessionId, learner.studentId!);
-      const draft = input.drafts[key];
-      if (learner.grade !== null && learner.feedback) {
-        return {
-          student_id: learner.studentId!,
-          grade: learner.grade,
-          feedback: learner.feedback,
-        };
-      }
-      return {
-        student_id: learner.studentId!,
-        grade: draft?.grade || 3,
-        feedback: draft?.feedback || "",
-      };
+  const rows: Array<{ student_id: string; grade: number; feedback: string }> = [];
+  for (const learner of input.learners) {
+    if (!learner.studentId || learner.attendanceStatus === "absent") continue;
+    if (isLearnerBlockedFromFeedback(learner)) continue;
+    if (hasStoredGradeAndFeedback(learner)) {
+      rows.push({
+        student_id: learner.studentId,
+        grade: learner.grade as number,
+        feedback: (learner.feedback as string).trim(),
+      });
+      continue;
+    }
+    const key = feedbackDraftKey(learner.sessionId || input.sessionId, learner.studentId);
+    const draft = input.drafts[key];
+    if (!isValidFeedbackDraft(draft)) continue;
+    rows.push({
+      student_id: learner.studentId,
+      grade: draft.grade,
+      feedback: draft.feedback.trim(),
     });
+  }
+  return rows;
 }
 
 function resolveSchedule(schedules: FeedbackScheduleRow[]): {
@@ -301,7 +391,17 @@ export function groupTeacherFeedbackCards(input: {
   });
 
   const cards: FeedbackCard[] = [];
-  const classIds = [...new Set(withClass.map((s) => s.class_id!))];
+  const classIds = [...new Set(withClass.map((s) => s.class_id!))].filter((classId) => {
+    const classSessions = withClass.filter((session) => session.class_id === classId);
+    return classSessions.some((session) =>
+      canTeacherDiscoverFeedbackRow({
+        teacherId: session.teacher_id,
+        status: session.status,
+        sessionType: session.session_type,
+        classId: session.class_id,
+      })
+    );
+  });
 
   for (const classId of classIds) {
     const classSessions = withClass.filter((s) => s.class_id === classId);
@@ -357,16 +457,22 @@ export function groupTeacherFeedbackCards(input: {
           mutationBlockedReason: scheduleAmbiguous ? "ambiguous_schedule" : "missing_session",
         });
       } else {
-        const built = buildLearnerFromSession(
-          learnerSessions[0],
-          att,
-          profile,
-          "missing_session"
-        );
-        built.sessionId = null;
-        built.mutationBlockedReason = "missing_session";
-        if (!built.studentName) built.studentName = fallbackName;
-        learners.push(built);
+        learners.push({
+          studentId,
+          studentName: profile?.full_name || fallbackName,
+          studentEmail: profile?.email || "",
+          sessionId: null,
+          sprintId: null,
+          sprintNumber: null,
+          enrollmentId: null,
+          attendanceId: att?.id || null,
+          attendanceStatus: att?.status || null,
+          sessionStatus: null,
+          grade: att?.grade ?? null,
+          feedback: att?.teacher_feedback ?? null,
+          courseName: classSessions[0]?.course_name || null,
+          mutationBlockedReason: scheduleAmbiguous ? "ambiguous_schedule" : "duplicate_sessions",
+        });
       }
     });
 

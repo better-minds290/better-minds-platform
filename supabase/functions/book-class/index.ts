@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { rollbackNewEnrollment } from "../_shared/bookingEnrollmentRollback.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -368,7 +369,7 @@ serve(async (req: Request) => {
     const scheduledAt = `${date}T${start_time}+07:00`;
     debugLog.push(`[13] Updating sprint_session: status=in_progress, scheduled_at=${scheduledAt}`);
 
-    const { error: updateErr } = await supabaseClient
+    const { data: updatedRows, error: updateErr } = await supabaseClient
       .from("sprint_sessions")
       .update({
         class_id: classId,
@@ -376,12 +377,28 @@ serve(async (req: Request) => {
         scheduled_at: scheduledAt,
         status: "in_progress",
       })
-      .eq("id", sprint_session_id);
+      .eq("id", sprint_session_id)
+      .select("id");
 
-    if (updateErr) {
-      debugLog.push(`[13-ERR] Session update failed: ${updateErr.message} (code=${updateErr.code})`);
+    if (updateErr || !updatedRows || updatedRows.length === 0) {
+      const rollback = await rollbackNewEnrollment(async (enrollmentId) => {
+        const { error } = await supabaseClient.from("class_enrollments").delete().eq("id", enrollmentId);
+        return { error: error ? { message: error.message } : null };
+      }, enrollment?.id || null);
+      debugLog.push(`[13-ERR] Session update failed: ${updateErr?.message || "0 rows"} (code=${updateErr?.code || "none"})`);
+      if (rollback.failed) {
+        debugLog.push(`[13-ERR] New enrollment rollback failed: ${rollback.error}`);
+      } else if (rollback.attempted) {
+        debugLog.push(`[13] Rolled back new enrollment ${rollback.deletedEnrollmentId}`);
+      }
       return new Response(
-        JSON.stringify({ error: "Failed to update session", detail: updateErr.message, code: updateErr.code, debug: debugLog }),
+        JSON.stringify({
+          error: "Failed to update session",
+          detail: updateErr?.message || "Session update affected 0 rows",
+          code: updateErr?.code,
+          enrollment_rollback: rollback,
+          debug: debugLog,
+        }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
